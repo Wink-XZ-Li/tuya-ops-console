@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DeviceOnlineStatus, Prisma } from '@prisma/client';
+import { MAX_DEVICES } from '../demo/device-limits';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   parseProductIds,
@@ -8,7 +9,6 @@ import {
   TuyaDeviceSummary,
 } from '../tuya/tuya.client';
 
-const MAX_DEVICES_PER_PRODUCT = 10;
 const PAGE_SIZE = 20;
 
 @Injectable()
@@ -25,35 +25,55 @@ export class SyncService {
     const syncedAt = new Date();
     let devicesSynced = 0;
     let bindingsSynced = 0;
+    let stoppedEarly = false;
 
     for (const productId of this.productIds) {
+      if (stoppedEarly) {
+        break;
+      }
+
       let page = 1;
-      let processed = 0;
 
       for (;;) {
+        const globalCount = await this.prisma.device.count();
+        if (globalCount >= MAX_DEVICES) {
+          this.logger.warn(
+            `Global device count ${globalCount} >= ${MAX_DEVICES}, stopping reconcile`,
+          );
+          stoppedEarly = true;
+          break;
+        }
+
         const { list, total } = await this.tuya.listDevicesByProduct(productId, page);
 
-        if (page === 1 && total >= MAX_DEVICES_PER_PRODUCT) {
+        if (page === 1 && total + globalCount > MAX_DEVICES) {
           this.logger.warn(
-            `Product ${productId}: total ${total} >= ${MAX_DEVICES_PER_PRODUCT}, truncating reconcile`,
+            `Product ${productId}: ${total} devices would exceed global cap (${globalCount}/${MAX_DEVICES}), truncating reconcile`,
           );
         }
 
-        const cap =
-          total >= MAX_DEVICES_PER_PRODUCT
-            ? MAX_DEVICES_PER_PRODUCT - processed
-            : list.length;
-        const batch = list.slice(0, Math.max(0, cap));
+        for (const summary of list) {
+          const currentCount = await this.prisma.device.count();
+          const existing = await this.prisma.device.findUnique({
+            where: { deviceId: summary.deviceId },
+            select: { id: true },
+          });
 
-        for (const summary of batch) {
+          if (!existing && currentCount >= MAX_DEVICES - 1) {
+            this.logger.warn(
+              `Skipping new device ${summary.deviceId}: global count ${currentCount} would reach ${MAX_DEVICES}`,
+            );
+            stoppedEarly = true;
+            break;
+          }
+
           const device = await this.upsertDevice(summary, syncedAt);
           devicesSynced += 1;
           const users = await this.tuya.getDeviceUsers(summary.deviceId);
           bindingsSynced += await this.replaceBindings(device.id, users, syncedAt);
-          processed += 1;
         }
 
-        if (total >= MAX_DEVICES_PER_PRODUCT && processed >= MAX_DEVICES_PER_PRODUCT) {
+        if (stoppedEarly) {
           break;
         }
         if (page * PAGE_SIZE >= total || list.length === 0) {

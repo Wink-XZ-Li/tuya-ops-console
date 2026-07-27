@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AlertStatus, DeviceOnlineStatus, Prisma } from '@prisma/client';
+import { MAX_DEVICES } from '../demo/device-limits';
 import { PrismaService } from '../prisma/prisma.service';
 import { isAllowedProduct } from '../tuya/tuya.client';
 import { DeviceBusMessage } from './device-bus-message';
@@ -29,6 +30,20 @@ export class EventHandlerService {
     const productId = await this.resolveProductId(message);
     if (!productId || !isAllowedProduct(productId, this.allowedProducts)) {
       return;
+    }
+
+    const existing = await this.prisma.device.findUnique({
+      where: { deviceId: message.deviceId },
+      select: { id: true },
+    });
+    if (!existing) {
+      const count = await this.prisma.device.count();
+      if (count >= MAX_DEVICES - 1) {
+        this.logger.warn(
+          `Skipping upsert for new device ${message.deviceId}: global device count ${count} >= ${MAX_DEVICES - 1}`,
+        );
+        return;
+      }
     }
 
     const eventTime = new Date(message.ts);

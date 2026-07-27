@@ -14,10 +14,14 @@ export class RetentionJob implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     if (process.env.RETENTION_RUN_ON_START === 'true') {
-      void this.run();
+      void this.run().catch((err) =>
+        this.logger.error('Retention job failed on start', err instanceof Error ? err.stack : err),
+      );
     }
     this.timer = setInterval(() => {
-      void this.run();
+      void this.run().catch((err) =>
+        this.logger.error('Retention job failed', err instanceof Error ? err.stack : err),
+      );
     }, RETENTION_INTERVAL_MS);
   }
 

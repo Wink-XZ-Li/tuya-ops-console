@@ -14,7 +14,9 @@ export class OfflineRuleJob implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     this.timer = setInterval(() => {
-      void this.run();
+      void this.run().catch((err) =>
+        this.logger.error('Offline rule job failed', err instanceof Error ? err.stack : err),
+      );
     }, OFFLINE_RULE_INTERVAL_MS);
   }
 
