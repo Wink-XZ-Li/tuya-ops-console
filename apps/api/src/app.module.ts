@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AlertsModule } from './alerts/alerts.module';
 import { AuthModule } from './auth/auth.module';
 import { CommandsModule } from './commands/commands.module';
 import { DevicesModule } from './devices/devices.module';
@@ -18,6 +19,7 @@ import { TuyaModule } from './tuya/tuya.module';
     SyncModule,
     CommandsModule,
     DpAliasesModule,
+    AlertsModule,
   ],
 })
 export class AppModule {}
