@@ -7,7 +7,10 @@
     "dev:web": "pnpm --filter @tuya-ops/web dev",
     "test": "pnpm -r test",
     "build": "pnpm -r build",
-    "seed:mock": "pnpm --filter @tuya-ops/api exec ts-node ../../scripts/seed-mock-devices.ts"
+    "seed:mock": "pnpm --filter @tuya-ops/api exec ts-node ../../scripts/seed-mock-devices.ts",
+    "demo:up": "docker compose up -d",
+    "demo:mock": "pnpm --filter @tuya-ops/api exec prisma migrate deploy && pnpm --filter @tuya-ops/api prisma:seed && pnpm seed:mock",
+    "demo:smoke": "bash scripts/smoke.sh"
   },
   "engines": { "node": ">=20" }
 }
