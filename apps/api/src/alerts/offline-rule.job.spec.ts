@@ -1,7 +1,18 @@
 import { OfflineRuleJob } from './offline-rule.job';
 
 describe('OfflineRuleJob', () => {
+  const originalEnv = process.env.OFFLINE_ALERT_MINUTES;
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.OFFLINE_ALERT_MINUTES;
+    } else {
+      process.env.OFFLINE_ALERT_MINUTES = originalEnv;
+    }
+  });
+
   it('does not duplicate open local_offline alerts', async () => {
+    process.env.OFFLINE_ALERT_MINUTES = '30';
     const prisma = {
       device: {
         findMany: jest
@@ -13,7 +24,7 @@ describe('OfflineRuleJob', () => {
         create: jest.fn(),
       },
     } as any;
-    const job = new OfflineRuleJob(prisma, 30);
+    const job = new OfflineRuleJob(prisma);
     await job.run();
     expect(prisma.alert.create).not.toHaveBeenCalled();
   });

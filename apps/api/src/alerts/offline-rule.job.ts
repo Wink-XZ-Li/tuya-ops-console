@@ -7,12 +7,10 @@ const OFFLINE_RULE_INTERVAL_MS = 5 * 60 * 1000;
 @Injectable()
 export class OfflineRuleJob implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OfflineRuleJob.name);
+  private readonly offlineAlertMinutes = Number(process.env.OFFLINE_ALERT_MINUTES ?? 10);
   private timer?: NodeJS.Timeout;
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly offlineAlertMinutes = Number(process.env.OFFLINE_ALERT_MINUTES ?? 10),
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   onModuleInit(): void {
     this.timer = setInterval(() => {

@@ -7,12 +7,10 @@ const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 @Injectable()
 export class RetentionJob implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RetentionJob.name);
+  private readonly retentionDays = Number(process.env.RETENTION_DAYS ?? 7);
   private timer?: NodeJS.Timeout;
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly retentionDays = Number(process.env.RETENTION_DAYS ?? 7),
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   onModuleInit(): void {
     if (process.env.RETENTION_RUN_ON_START === 'true') {
