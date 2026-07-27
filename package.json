@@ -1,0 +1,12 @@
+{
+  "name": "tuya-ops-console",
+  "private": true,
+  "scripts": {
+    "dev:api": "pnpm --filter @tuya-ops/api dev",
+    "dev:bridge": "pnpm --filter @tuya-ops/bridge dev",
+    "dev:web": "pnpm --filter @tuya-ops/web dev",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build"
+  },
+  "engines": { "node": ">=20" }
+}
