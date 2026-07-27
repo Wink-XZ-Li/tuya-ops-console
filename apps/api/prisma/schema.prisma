@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum AdminRole {
+  readonly
+  operator
+  admin
+}
+
+enum DeviceOnlineStatus {
+  online
+  offline
+  unknown
+}
+
+enum AlertStatus {
+  open
+  acked
+  closed
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  role         AdminRole
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  auditLogs    AuditLog[]
+  commandLogs  CommandLog[]
+}
+
+model EndUser {
+  id          String          @id @default(cuid())
+  tuyaUid     String          @unique
+  username    String?
+  mobile      String?
+  email       String?
+  raw         Json?
+  syncedAt    DateTime        @default(now())
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  bindings    DeviceBinding[]
+}
+
+model Device {
+  id            String             @id @default(cuid())
+  deviceId      String             @unique
+  productId     String
+  name          String?
+  onlineStatus  DeviceOnlineStatus @default(unknown)
+  statusJson    Json?
+  activatedAt   DateTime?
+  lastSeenAt    DateTime?
+  syncedAt      DateTime           @default(now())
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  bindings      DeviceBinding[]
+  events        DeviceEvent[]
+  commandLogs   CommandLog[]
+  alerts        Alert[]
+
+  @@index([productId])
+  @@index([onlineStatus])
+}
+
+model DeviceBinding {
+  id         String   @id @default(cuid())
+  deviceId   String
+  endUserId  String
+  boundAt    DateTime?
+  syncedAt   DateTime @default(now())
+  device     Device   @relation(fields: [deviceId], references: [id])
+  endUser    EndUser  @relation(fields: [endUserId], references: [id])
+
+  @@unique([deviceId, endUserId])
+  @@index([endUserId])
+}
+
+model DeviceEvent {
+  id        String   @id @default(cuid())
+  deviceId  String
+  bizCode   String
+  payload   Json
+  eventTime DateTime
+  createdAt DateTime @default(now())
+  device    Device   @relation(fields: [deviceId], references: [id])
+
+  @@index([deviceId, eventTime])
+  @@index([bizCode, eventTime])
+  @@index([eventTime])
+}
+
+model CommandLog {
+  id           String   @id @default(cuid())
+  deviceId     String
+  adminUserId  String
+  productId    String
+  code         String
+  value        Json
+  tuyaResponse Json?
+  success      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  device       Device   @relation(fields: [deviceId], references: [id])
+  adminUser    AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@index([deviceId, createdAt])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  adminUserId String
+  action      String
+  resource    String
+  detail      Json?
+  createdAt   DateTime @default(now())
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@index([createdAt])
+}
+
+model Alert {
+  id         String      @id @default(cuid())
+  deviceId   String
+  source     String
+  title      String
+  detail     Json?
+  status     AlertStatus @default(open)
+  openedAt   DateTime    @default(now())
+  closedAt   DateTime?
+  device     Device      @relation(fields: [deviceId], references: [id])
+
+  @@index([status, openedAt])
+  @@index([deviceId, status])
+}
+
+model DpAlias {
+  id        String   @id @default(cuid())
+  productId String
+  code      String
+  alias     String
+  groupName String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, code])
+  @@index([productId])
+}
