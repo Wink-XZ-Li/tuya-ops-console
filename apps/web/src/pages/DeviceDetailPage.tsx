@@ -94,6 +94,7 @@ export function DeviceDetailPage() {
               <p className="muted">只读角色不可下发指令</p>
             )}
             <CommandPanel
+              key={deviceId}
               deviceId={device.deviceId}
               functions={functions}
               disabled={readonly}
