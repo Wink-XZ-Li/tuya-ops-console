@@ -19,6 +19,12 @@ enum DeviceOnlineStatus {
   unknown
 }
 
+enum DeviceFaultStatus {
+  normal
+  fault
+  unknown
+}
+
 enum AlertStatus {
   open
   acked
@@ -42,6 +48,7 @@ model EndUser {
   username    String?
   mobile      String?
   email       String?
+  remark      String?         @db.VarChar(512)
   raw         Json?
   syncedAt    DateTime        @default(now())
   createdAt   DateTime        @default(now())
@@ -50,24 +57,31 @@ model EndUser {
 }
 
 model Device {
-  id            String             @id @default(cuid())
-  deviceId      String             @unique
-  productId     String
-  name          String?
-  onlineStatus  DeviceOnlineStatus @default(unknown)
-  statusJson    Json?
-  activatedAt   DateTime?
-  lastSeenAt    DateTime?
-  syncedAt      DateTime           @default(now())
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  bindings      DeviceBinding[]
-  events        DeviceEvent[]
-  commandLogs   CommandLog[]
-  alerts        Alert[]
+  id             String             @id @default(cuid())
+  deviceId       String             @unique
+  productId      String
+  name           String?
+  onlineStatus   DeviceOnlineStatus @default(unknown)
+  statusJson     Json?
+  faultStatus    DeviceFaultStatus  @default(unknown)
+  faultInfo      String?            @db.VarChar(512)
+  lat            String?
+  lon            String?
+  locationText   String?            @db.VarChar(128)
+  signalStrength String?            @db.VarChar(64)
+  activatedAt    DateTime?
+  lastSeenAt     DateTime?
+  syncedAt       DateTime           @default(now())
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  bindings       DeviceBinding[]
+  events         DeviceEvent[]
+  commandLogs    CommandLog[]
+  alerts         Alert[]
 
   @@index([productId])
   @@index([onlineStatus])
+  @@index([faultStatus])
 }
 
 model DeviceBinding {

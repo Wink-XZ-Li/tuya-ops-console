@@ -12,6 +12,11 @@ export class KafkaConsumer implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly eventHandler: EventHandlerService) {}
 
   async onModuleInit(): Promise<void> {
+    // Do not block Nest listen() on Kafka join (can take tens of seconds).
+    void this.startConsumer();
+  }
+
+  private async startConsumer(): Promise<void> {
     const brokers = (process.env.KAFKA_BROKERS ?? '127.0.0.1:19092')
       .split(',')
       .map((b) => b.trim())

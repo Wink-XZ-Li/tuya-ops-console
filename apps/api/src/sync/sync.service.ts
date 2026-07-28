@@ -1,5 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DeviceOnlineStatus, Prisma } from '@prisma/client';
+import {
+  deriveFaultFields,
+  deriveSignalStrength,
+  formatLocationText,
+  statusFromPairs,
+} from '../devices/device-derived';
 import { MAX_DEVICES } from '../demo/device-limits';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -28,7 +34,6 @@ export class SyncService {
     let stoppedEarly = false;
     let purgedMock = 0;
 
-    // Live mode: drop leftover mock seed rows so the list shows real devices only.
     if (process.env.DEMO_MODE === 'live') {
       const mockDevices = await this.prisma.device.findMany({
         where: { deviceId: { startsWith: 'demo-' } },
@@ -83,6 +88,7 @@ export class SyncService {
 
           const device = await this.upsertDevice(summary, syncedAt);
           devicesSynced += 1;
+          await this.refreshDeviceStatusDerived(device.id, summary.deviceId);
           const users = await this.tuya.getDeviceUsers(summary.deviceId);
           bindingsSynced += await this.replaceBindings(device.id, users, syncedAt);
         }
@@ -106,13 +112,13 @@ export class SyncService {
     return { devicesSynced, bindingsSynced, purgedMock };
   }
 
-  /** Pull one known device by id (useful when product-list API is empty/permission-limited). */
   async reconcileDevice(adminUserId: string, deviceId: string) {
     if (process.env.DEMO_MODE !== 'live') {
       throw new Error('reconcileDevice requires DEMO_MODE=live');
     }
     const summary = await this.tuya.getDevice(deviceId);
     const device = await this.upsertDevice(summary, new Date());
+    await this.refreshDeviceStatusDerived(device.id, deviceId);
     const users = await this.tuya.getDeviceUsers(deviceId);
     const bindingsSynced = await this.replaceBindings(device.id, users, new Date());
     await this.prisma.auditLog.create({
@@ -134,22 +140,58 @@ export class SyncService {
       onlineStatus = DeviceOnlineStatus.offline;
     }
 
+    const lat = summary.lat ?? null;
+    const lon = summary.lon ?? null;
+
     return this.prisma.device.upsert({
       where: { deviceId: summary.deviceId },
       update: {
         productId: summary.productId,
-        name: summary.name,
+        name: summary.name || undefined,
         onlineStatus,
+        lat,
+        lon,
+        locationText: formatLocationText(lat, lon),
         syncedAt,
       },
       create: {
         deviceId: summary.deviceId,
         productId: summary.productId,
-        name: summary.name,
+        name: summary.name || null,
         onlineStatus,
+        lat,
+        lon,
+        locationText: formatLocationText(lat, lon),
         syncedAt,
       },
     });
+  }
+
+  private async refreshDeviceStatusDerived(internalId: string, tuyaDeviceId: string) {
+    try {
+      const pairs = await this.tuya.getDeviceStatus(tuyaDeviceId);
+      const status = statusFromPairs(pairs);
+      const alerts = await this.prisma.alert.findMany({
+        where: { deviceId: internalId, status: { not: 'closed' } },
+        select: { title: true },
+        take: 5,
+      });
+      const fault = deriveFaultFields(
+        status,
+        alerts.map((a) => a.title),
+      );
+      await this.prisma.device.update({
+        where: { id: internalId },
+        data: {
+          statusJson: status as Prisma.InputJsonValue,
+          faultStatus: fault.faultStatus,
+          faultInfo: fault.faultInfo,
+          signalStrength: deriveSignalStrength(status),
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`status refresh failed for ${tuyaDeviceId}: ${String(err)}`);
+    }
   }
 
   private async replaceBindings(
@@ -160,10 +202,24 @@ export class SyncService {
     const endUserIds: string[] = [];
 
     for (const tuyaUid of tuyaUids) {
+      const profile = await this.tuya.getUserProfile(tuyaUid);
       const endUser = await this.prisma.endUser.upsert({
         where: { tuyaUid },
-        update: { syncedAt },
-        create: { tuyaUid, syncedAt },
+        update: {
+          syncedAt,
+          ...(profile?.username ? { username: profile.username } : {}),
+          ...(profile?.mobile ? { mobile: profile.mobile } : {}),
+          ...(profile?.email ? { email: profile.email } : {}),
+          ...(profile?.raw ? { raw: profile.raw as Prisma.InputJsonValue } : {}),
+        },
+        create: {
+          tuyaUid,
+          syncedAt,
+          username: profile?.username,
+          mobile: profile?.mobile,
+          email: profile?.email,
+          raw: profile?.raw ? (profile.raw as Prisma.InputJsonValue) : undefined,
+        },
       });
       endUserIds.push(endUser.id);
     }
@@ -171,9 +227,7 @@ export class SyncService {
     await this.prisma.deviceBinding.deleteMany({
       where: {
         deviceId,
-        ...(endUserIds.length > 0
-          ? { endUserId: { notIn: endUserIds } }
-          : {}),
+        ...(endUserIds.length > 0 ? { endUserId: { notIn: endUserIds } } : {}),
       },
     });
 

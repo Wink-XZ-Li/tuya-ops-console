@@ -10,6 +10,8 @@ describe('SyncService', () => {
         total: 1,
       }),
       getDeviceUsers: jest.fn().mockResolvedValue([]),
+      getDeviceStatus: jest.fn().mockResolvedValue([]),
+      getUserProfile: jest.fn().mockResolvedValue(null),
     };
     const prisma = {
       device: {
@@ -43,6 +45,8 @@ describe('SyncService', () => {
         total: 1,
       }),
       getDeviceUsers: jest.fn().mockResolvedValue([]),
+      getDeviceStatus: jest.fn().mockResolvedValue([]),
+      getUserProfile: jest.fn().mockResolvedValue(null),
     };
     const prisma = {
       device: {

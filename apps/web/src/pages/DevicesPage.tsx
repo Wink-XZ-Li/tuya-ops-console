@@ -124,7 +124,7 @@ export function DevicesPage() {
             ))}
           </select>
           <select value={onlineStatus} onChange={(e) => setOnlineStatus(e.target.value)}>
-            <option value="">全部状态</option>
+            <option value="">网络状态（全部）</option>
             <option value="online">online</option>
             <option value="offline">offline</option>
             <option value="unknown">unknown</option>

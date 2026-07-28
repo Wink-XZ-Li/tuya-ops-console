@@ -55,4 +55,15 @@ export class EndUsersService {
 
     return endUser.bindings.map((binding) => binding.device);
   }
+
+  async updateRemark(tuyaUid: string, remark: string | null | undefined) {
+    const endUser = await this.prisma.endUser.findUnique({ where: { tuyaUid } });
+    if (!endUser) {
+      throw new NotFoundException(`End user ${tuyaUid} not found`);
+    }
+    return this.prisma.endUser.update({
+      where: { tuyaUid },
+      data: { remark: remark ?? null },
+    });
+  }
 }

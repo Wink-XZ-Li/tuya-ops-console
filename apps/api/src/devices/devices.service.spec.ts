@@ -8,7 +8,7 @@ describe('DevicesService', () => {
         count: jest.fn().mockResolvedValue(0),
       },
     } as any;
-    const svc = new DevicesService(prisma);
+    const svc = new DevicesService(prisma, {} as any);
     await svc.list({ productId: 'uhmj5b0ba31zpme6', page: 1, pageSize: 20 });
     expect(prisma.device.findMany).toHaveBeenCalledWith(
       expect.objectContaining({

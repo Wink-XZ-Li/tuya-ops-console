@@ -6,11 +6,21 @@ export type DeviceRow = {
   productId: string;
   onlineStatus: string;
   lastSeenAt?: string | null;
+  faultStatus?: string | null;
+  faultInfo?: string | null;
+  locationText?: string | null;
+  signalStrength?: string | null;
 };
 
 type Props = {
   items: DeviceRow[];
 };
+
+function faultLabel(status?: string | null): string {
+  if (status === 'fault') return '故障';
+  if (status === 'normal') return '正常';
+  return '未知';
+}
 
 export function DeviceTable({ items }: Props) {
   if (items.length === 0) {
@@ -25,7 +35,11 @@ export function DeviceTable({ items }: Props) {
             <th>deviceId</th>
             <th>名称</th>
             <th>productId</th>
-            <th>在线</th>
+            <th>网络状态</th>
+            <th>信号强度</th>
+            <th>故障情况</th>
+            <th>故障信息</th>
+            <th>所在城市</th>
             <th>lastSeenAt</th>
           </tr>
         </thead>
@@ -52,6 +66,10 @@ export function DeviceTable({ items }: Props) {
                   {d.onlineStatus}
                 </span>
               </td>
+              <td>{d.signalStrength ?? '—'}</td>
+              <td>{faultLabel(d.faultStatus)}</td>
+              <td>{d.faultInfo ?? '—'}</td>
+              <td>{d.locationText ?? '—'}</td>
               <td>{d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString() : '—'}</td>
             </tr>
           ))}

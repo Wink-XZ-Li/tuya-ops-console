@@ -269,6 +269,19 @@ table.data tbody tr.no-click {
   gap: 1rem;
 }
 
+.device-detail-top {
+  display: grid;
+  grid-template-columns: minmax(240px, 30%) minmax(0, 70%);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .device-detail-top {
+    grid-template-columns: 1fr;
+  }
+}
+
 .kv {
   display: grid;
   grid-template-columns: 8rem 1fr;

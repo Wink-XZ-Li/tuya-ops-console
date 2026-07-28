@@ -1,5 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AlertStatus, DeviceOnlineStatus, Prisma } from '@prisma/client';
+import {
+  asRecord,
+  collectFaultEntries,
+  deriveFaultFields,
+  deriveSignalStrength,
+  extractStatusUpdates,
+} from '../devices/device-derived';
 import { MAX_DEVICES } from '../demo/device-limits';
 import { PrismaService } from '../prisma/prisma.service';
 import { isAllowedProduct } from '../tuya/tuya.client';
@@ -14,8 +21,6 @@ const PROPERTY_CODES = new Set([
 ]);
 const BIND_CODES = new Set(['bindUser', 'deviceBindUser']);
 const UNBIND_CODES = new Set(['unbindUser', 'deviceUnbindUser']);
-
-const FAULT_CODE_PATTERN = /fault|alarm|error|warn|malfunction/i;
 
 @Injectable()
 export class EventHandlerService {
@@ -142,12 +147,27 @@ export class EventHandlerService {
       ...updates,
     };
 
+    const openAlerts = await this.prisma.alert.findMany({
+      where: { deviceId, status: { not: AlertStatus.closed } },
+      select: { title: true },
+      take: 5,
+    });
+    const fault = deriveFaultFields(
+      merged,
+      openAlerts.map((a) => a.title),
+    );
+
     await this.prisma.device.update({
       where: { id: deviceId },
-      data: { statusJson: merged as Prisma.InputJsonValue },
+      data: {
+        statusJson: merged as Prisma.InputJsonValue,
+        faultStatus: fault.faultStatus,
+        faultInfo: fault.faultInfo,
+        signalStrength: deriveSignalStrength(merged),
+      },
     });
 
-    if (hasFaultIndicators(updates)) {
+    if (collectFaultEntries(updates).length > 0) {
       await this.prisma.alert.create({
         data: {
           deviceId,
@@ -204,47 +224,4 @@ export class EventHandlerService {
       where: { deviceId, endUserId: endUser.id },
     });
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return {};
-}
-
-function extractStatusUpdates(payload: Record<string, unknown>): Record<string, unknown> {
-  const status = payload.status;
-  if (Array.isArray(status)) {
-    return status.reduce<Record<string, unknown>>((acc, item) => {
-      if (item && typeof item === 'object' && 'code' in item) {
-        const row = item as { code: string; value?: unknown };
-        acc[row.code] = row.value;
-      }
-      return acc;
-    }, {});
-  }
-
-  const properties = payload.properties;
-  if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
-    return { ...(properties as Record<string, unknown>) };
-  }
-
-  const { status: _status, properties: _properties, ...rest } = payload;
-  return rest;
-}
-
-function hasFaultIndicators(updates: Record<string, unknown>): boolean {
-  return Object.entries(updates).some(([code, value]) => {
-    if (FAULT_CODE_PATTERN.test(code)) {
-      return true;
-    }
-    if (typeof value === 'boolean') {
-      return value && FAULT_CODE_PATTERN.test(code);
-    }
-    if (typeof value === 'string') {
-      return FAULT_CODE_PATTERN.test(value);
-    }
-    return false;
-  });
 }

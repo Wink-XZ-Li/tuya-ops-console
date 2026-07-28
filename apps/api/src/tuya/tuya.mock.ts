@@ -6,6 +6,7 @@ import {
   TuyaClient,
   TuyaDeviceDetail,
   TuyaDeviceSummary,
+  TuyaUserProfile,
 } from './tuya.client';
 
 export { isAllowedProduct };
@@ -99,5 +100,15 @@ export class TuyaMockClient implements TuyaClient {
 
   async getDeviceUsers(deviceId: string): Promise<string[]> {
     return MOCK_DEVICE_USERS[deviceId] ?? [];
+  }
+
+  async getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null> {
+    return {
+      tuyaUid,
+      username: `user-${tuyaUid.slice(-4)}`,
+      mobile: tuyaUid.includes('001') ? '13800000001' : undefined,
+      email: undefined,
+      raw: { mock: true },
+    };
   }
 }

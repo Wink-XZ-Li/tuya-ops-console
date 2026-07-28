@@ -6,6 +6,8 @@ export interface TuyaDeviceSummary {
   productId: string;
   name: string;
   online?: boolean;
+  lat?: string;
+  lon?: string;
 }
 
 export interface TuyaDeviceDetail extends TuyaDeviceSummary {
@@ -13,11 +15,21 @@ export interface TuyaDeviceDetail extends TuyaDeviceSummary {
   category?: string;
 }
 
+export interface TuyaUserProfile {
+  tuyaUid: string;
+  username?: string;
+  mobile?: string;
+  email?: string;
+  raw?: Record<string, unknown>;
+}
+
 export interface StandardFunction {
   code: string;
   name?: string;
   type?: string;
   values?: unknown;
+  /** rw | wr | ro — when missing, treat as writable (standard instruction set). */
+  mode?: string;
 }
 
 export const TUYA_CLIENT = Symbol('TUYA_CLIENT');
@@ -35,6 +47,7 @@ export interface TuyaClient {
     pageOrCursor?: number | { lastId?: string; pageSize?: number },
   ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }>;
   getDeviceUsers(deviceId: string): Promise<string[]>;
+  getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null>;
 }
 
 export function isAllowedProduct(productId: string, allowed: Set<string>): boolean {
@@ -102,6 +115,8 @@ export class TuyaLiveClient implements TuyaClient {
       online: Boolean(result.is_online ?? result.isOnline ?? result.online),
       uuid: result.uuid ? String(result.uuid) : undefined,
       category: result.category ? String(result.category) : undefined,
+      lat: result.lat != null && String(result.lat) !== '' ? String(result.lat) : undefined,
+      lon: result.lon != null && String(result.lon) !== '' ? String(result.lon) : undefined,
     };
   }
 
@@ -210,6 +225,8 @@ export class TuyaLiveClient implements TuyaClient {
               : d.online != null
                 ? Boolean(d.online)
                 : undefined,
+        lat: d.lat != null && String(d.lat) !== '' ? String(d.lat) : undefined,
+        lon: d.lon != null && String(d.lon) !== '' ? String(d.lon) : undefined,
       }))
       .filter((d) => d.deviceId && isAllowedProduct(d.productId, this.allowedProducts));
 
@@ -232,5 +249,33 @@ export class TuyaLiveClient implements TuyaClient {
       return [];
     }
     return res.result?.uid_list ?? [];
+  }
+
+  async getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null> {
+    const paths = [`/v1.0/users/${tuyaUid}`, `/v1.0/users/${tuyaUid}/infos`];
+    for (const path of paths) {
+      try {
+        const res = await this.context.request<Record<string, unknown>>({
+          method: 'GET',
+          path,
+        });
+        if (!res.success || !res.result) {
+          continue;
+        }
+        const result = res.result;
+        return {
+          tuyaUid,
+          username: String(
+            result.nick_name ?? result.nickname ?? result.username ?? result.name ?? '',
+          ) || undefined,
+          mobile: String(result.mobile ?? result.phone ?? '') || undefined,
+          email: String(result.email ?? '') || undefined,
+          raw: result,
+        };
+      } catch (err) {
+        this.logger.debug(`getUserProfile ${path} failed for ${tuyaUid}: ${String(err)}`);
+      }
+    }
+    return null;
   }
 }
