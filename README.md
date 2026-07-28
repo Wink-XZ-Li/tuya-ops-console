@@ -43,7 +43,7 @@
 
 5. **打开浏览器**
 
-   - 地址：<http://localhost:5173>
+   - 地址：本机 <http://localhost:5173>；局域网其它设备用 `http://<本机局域网IP>:5173`（Vite 已 `host: true`，仅内网 Demo）
    - 账号：`admin` / `ChangeMe123!`
    - 其他账号：`operator`、`readonly`（同密码）
 
