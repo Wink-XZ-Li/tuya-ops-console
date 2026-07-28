@@ -56,8 +56,33 @@ export function DevicesPage() {
   async function reconcile() {
     setSyncMsg(null);
     try {
-      await api('/api/sync/reconcile', { method: 'POST' });
-      setSyncMsg('同步已触发');
+      const res = await api<{
+        devicesSynced: number;
+        bindingsSynced: number;
+        purgedMock?: number;
+      }>('/api/sync/reconcile', { method: 'POST' });
+      setSyncMsg(
+        `同步完成：设备 ${res.devicesSynced}，绑定 ${res.bindingsSynced}` +
+          (res.purgedMock ? `，已清除 mock ${res.purgedMock}` : ''),
+      );
+      void load();
+    } catch (e) {
+      setSyncMsg(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function reconcileOne() {
+    const deviceId = window.prompt('输入涂鸦 deviceId（例如测试设备）');
+    if (!deviceId?.trim()) return;
+    setSyncMsg(null);
+    try {
+      const res = await api<{ device: { deviceId: string; productId: string; name: string | null } }>(
+        '/api/sync/reconcile-device',
+        { method: 'POST', body: JSON.stringify({ deviceId: deviceId.trim() }) },
+      );
+      setSyncMsg(
+        `已同步单设备 ${res.device.deviceId}（${res.device.name ?? ''} / ${res.device.productId}）`,
+      );
       void load();
     } catch (e) {
       setSyncMsg(e instanceof Error ? e.message : String(e));
@@ -69,12 +94,17 @@ export function DevicesPage() {
       <div className="page-header">
         <h1>
           设备
-          <span className="hint">Demo · 设备 &lt; 10</span>
+          <span className="hint">设备上限 &lt; 10</span>
         </h1>
         <RoleGate allow={['admin']}>
-          <button type="button" className="btn" onClick={() => void reconcile()}>
-            触发同步
-          </button>
+          <div className="row gap">
+            <button type="button" className="btn" onClick={() => void reconcile()}>
+              触发同步
+            </button>
+            <button type="button" className="btn secondary" onClick={() => void reconcileOne()}>
+              同步指定设备
+            </button>
+          </div>
         </RoleGate>
       </div>
 

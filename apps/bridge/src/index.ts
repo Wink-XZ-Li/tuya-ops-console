@@ -1,6 +1,9 @@
-import { DeviceEventKafkaProducer, parseBrokers } from './kafka-producer';
-import { TuyaPulsarConsumer } from './pulsar';
 import { DeviceBusMessage } from './device-bus-message';
+import { DeviceEventKafkaProducer, parseBrokers } from './kafka-producer';
+import { loadRootEnv } from './load-env';
+import { TuyaPulsarConsumer } from './pulsar';
+
+loadRootEnv();
 
 const DEFAULT_PRODUCT_IDS = [
   'uhmj5b0ba31zpme6',
@@ -40,10 +43,15 @@ async function main(): Promise<void> {
   });
   await kafka.connect();
 
+  const topic =
+    process.env.TUYA_PULSAR_TOPIC ??
+    `persistent://${accessId}/out/event`;
+
   const pulsar = new TuyaPulsarConsumer({
     serviceUrl: process.env.TUYA_PULSAR_URL ?? 'pulsar+ssl://mqe.tuyacn.com:7285/',
     accessId,
     accessKey,
+    topic,
   });
 
   const forward = async (message: DeviceBusMessage): Promise<void> => {
@@ -63,7 +71,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  console.log('Bridge started: Tuya Pulsar → Redpanda (live mode)');
+  console.log(`Bridge started: Tuya Pulsar → Redpanda (live), topic=${topic}`);
   await pulsar.start(forward);
 }
 

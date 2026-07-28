@@ -81,7 +81,9 @@ export class TuyaLiveClient implements TuyaClient {
       path: `/v1.0/devices/${deviceId}`,
     });
     if (!res.success) {
-      throw new Error(`Tuya getDevice failed for ${deviceId}`);
+      const code = (res as { code?: number }).code;
+      const msg = (res as { msg?: string }).msg ?? 'unknown';
+      throw new Error(`Tuya getDevice failed for ${deviceId}: [${code}] ${msg}`);
     }
     const result = res.result ?? {};
     const productId = String(result.product_id ?? result.productId ?? '');
@@ -156,19 +158,22 @@ export class TuyaLiveClient implements TuyaClient {
       },
     });
     if (!res.success) {
-      this.logger.warn(`listDevicesByProduct failed for ${productId}`);
-      return { list: [], total: 0 };
+      const code = (res as { code?: number }).code;
+      const msg = (res as { msg?: string }).msg ?? 'unknown';
+      this.logger.warn(`listDevicesByProduct failed for ${productId}: code=${code} msg=${msg}`);
+      throw new Error(`涂鸦 OpenAPI 失败 (${productId}): [${code}] ${msg}`);
     }
-    const devices = res.result?.devices ?? [];
+    const result = (res.result ?? {}) as Record<string, unknown>;
+    const devices = (result.devices ?? result.list ?? []) as Array<Record<string, unknown>>;
     const list = devices
       .map((d) => ({
-        deviceId: String(d.id ?? ''),
-        productId: String(d.product_id ?? productId),
+        deviceId: String(d.id ?? d.device_id ?? ''),
+        productId: String(d.product_id ?? d.productId ?? productId),
         name: String(d.name ?? ''),
         online: d.online != null ? Boolean(d.online) : undefined,
       }))
-      .filter((d) => isAllowedProduct(d.productId, this.allowedProducts));
-    return { list, total: res.result?.total ?? list.length };
+      .filter((d) => d.deviceId && isAllowedProduct(d.productId, this.allowedProducts));
+    return { list, total: Number(result.total ?? list.length) };
   }
 
   async getDeviceUsers(deviceId: string): Promise<string[]> {

@@ -26,6 +26,25 @@ export class SyncService {
     let devicesSynced = 0;
     let bindingsSynced = 0;
     let stoppedEarly = false;
+    let purgedMock = 0;
+
+    // Live mode: drop leftover mock seed rows so the list shows real devices only.
+    if (process.env.DEMO_MODE === 'live') {
+      const mockDevices = await this.prisma.device.findMany({
+        where: { deviceId: { startsWith: 'demo-' } },
+        select: { id: true },
+      });
+      if (mockDevices.length > 0) {
+        const ids = mockDevices.map((d) => d.id);
+        await this.prisma.deviceBinding.deleteMany({ where: { deviceId: { in: ids } } });
+        await this.prisma.deviceEvent.deleteMany({ where: { deviceId: { in: ids } } });
+        await this.prisma.commandLog.deleteMany({ where: { deviceId: { in: ids } } });
+        await this.prisma.alert.deleteMany({ where: { deviceId: { in: ids } } });
+        const deleted = await this.prisma.device.deleteMany({ where: { id: { in: ids } } });
+        purgedMock = deleted.count;
+        this.logger.warn(`Purged ${purgedMock} mock demo-* devices before live reconcile`);
+      }
+    }
 
     for (const productId of this.productIds) {
       if (stoppedEarly) {
@@ -88,11 +107,31 @@ export class SyncService {
         adminUserId,
         action: 'sync.reconcile',
         resource: 'sync',
-        detail: { devicesSynced, bindingsSynced } as Prisma.InputJsonValue,
+        detail: { devicesSynced, bindingsSynced, purgedMock } as Prisma.InputJsonValue,
       },
     });
 
-    return { devicesSynced, bindingsSynced };
+    return { devicesSynced, bindingsSynced, purgedMock };
+  }
+
+  /** Pull one known device by id (useful when product-list API is empty/permission-limited). */
+  async reconcileDevice(adminUserId: string, deviceId: string) {
+    if (process.env.DEMO_MODE !== 'live') {
+      throw new Error('reconcileDevice requires DEMO_MODE=live');
+    }
+    const summary = await this.tuya.getDevice(deviceId);
+    const device = await this.upsertDevice(summary, new Date());
+    const users = await this.tuya.getDeviceUsers(deviceId);
+    const bindingsSynced = await this.replaceBindings(device.id, users, new Date());
+    await this.prisma.auditLog.create({
+      data: {
+        adminUserId,
+        action: 'sync.reconcileDevice',
+        resource: deviceId,
+        detail: { productId: summary.productId, bindingsSynced } as Prisma.InputJsonValue,
+      },
+    });
+    return { device, bindingsSynced };
   }
 
   private async upsertDevice(summary: TuyaDeviceSummary, syncedAt: Date) {

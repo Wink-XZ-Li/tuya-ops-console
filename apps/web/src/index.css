@@ -196,6 +196,17 @@ button {
   background: var(--accent-hover);
 }
 
+.btn.secondary {
+  background: #eef2f6;
+}
+
+.row.gap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;

@@ -61,9 +61,13 @@ pnpm demo:smoke
 
 ### Live 模式（可选）
 
-1. `.env` 中设置 `DEMO_MODE=live`，填写 `TUYA_ACCESS_ID`、`TUYA_ACCESS_SECRET` 及 Pulsar 相关变量。
-2. 另开终端：`pnpm dev:bridge`（Pulsar → 本地 Kafka → API 落库）。
-3. 真实设备需 &lt; 10 台，且 `productId` 在白名单内（见 `TUYA_PRODUCT_IDS`）。
+1. `.env` 中设置 `DEMO_MODE=live` / `VITE_DEMO_MODE=live`，填写 `TUYA_ACCESS_ID`、`TUYA_ACCESS_SECRET` 及 Pulsar 相关变量。
+2. **必须重启** `pnpm dev:api` 与 `pnpm dev:bridge`（根目录 `.env` 由进程启动时加载；只改前端角标不够）。
+3. 启动日志应出现：`Using TuyaLiveClient` / `Bridge started: ... topic=...`。若仍是 `TuyaMockClient` 或 `DEMO_MODE=mock`，说明环境变量未加载。
+4. 管理端点「触发同步」：会清除 `demo-*` mock 设备，再按白名单 PID 拉真机；「同步指定设备」可按 deviceId 单拉。
+5. 另开终端：`pnpm dev:bridge`。生产消息 topic 默认 `.../out/event`；测试环境用 `.../out/event-test`（`TUYA_PULSAR_TOPIC`）。
+6. 真实设备需 &lt; 10 台，且 `productId` 在 `TUYA_PRODUCT_IDS` 白名单内。
+7. 若 OpenAPI 返回 `28841002 IoT Core service subscription has expired`：到涂鸦云开发控制台续费/开通 **IoT Core**（消息订阅到期后 OpenAPI 也无法查设备）。
 
 ## 目录速览
 
