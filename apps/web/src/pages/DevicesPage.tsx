@@ -94,7 +94,7 @@ export function DevicesPage() {
       <div className="page-header">
         <h1>
           设备
-          <span className="hint">设备上限 &lt; 10</span>
+          <span className="hint">设备上限 50</span>
         </h1>
         <RoleGate allow={['admin']}>
           <div className="row gap">

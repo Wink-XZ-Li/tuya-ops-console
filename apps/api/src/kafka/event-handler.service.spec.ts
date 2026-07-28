@@ -18,11 +18,11 @@ describe('EventHandlerService', () => {
     expect(prisma.deviceEvent.create).not.toHaveBeenCalled();
   });
 
-  it('skips upsert for new device when global count >= 9', async () => {
+  it('skips upsert for new device when global count >= MAX_DEVICES', async () => {
     const prisma = {
       device: {
         findUnique: jest.fn().mockResolvedValue(null),
-        count: jest.fn().mockResolvedValue(9),
+        count: jest.fn().mockResolvedValue(50),
         upsert: jest.fn(),
       },
       deviceEvent: { create: jest.fn() },

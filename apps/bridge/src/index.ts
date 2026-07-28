@@ -1,7 +1,7 @@
 import { DeviceBusMessage } from './device-bus-message';
 import { DeviceEventKafkaProducer, parseBrokers } from './kafka-producer';
 import { loadRootEnv } from './load-env';
-import { TuyaPulsarConsumer } from './pulsar';
+import { parseMqEnv, TuyaWebsocketConsumer } from './tuya-websocket';
 
 loadRootEnv();
 
@@ -26,7 +26,7 @@ function isAllowedProduct(productId: string | undefined, allowed: Set<string>): 
 async function main(): Promise<void> {
   const demoMode = process.env.DEMO_MODE ?? 'mock';
   if (demoMode !== 'live') {
-    console.log(`DEMO_MODE=${demoMode}; bridge is not required (mock demo skips Pulsar→Redpanda).`);
+    console.log(`DEMO_MODE=${demoMode}; bridge is not required (mock demo skips Tuya MQ → Redpanda).`);
     return;
   }
 
@@ -43,27 +43,28 @@ async function main(): Promise<void> {
   });
   await kafka.connect();
 
-  const topic =
-    process.env.TUYA_PULSAR_TOPIC ??
-    `persistent://${accessId}/out/event`;
-
-  const pulsar = new TuyaPulsarConsumer({
-    serviceUrl: process.env.TUYA_PULSAR_URL ?? 'pulsar+ssl://mqe.tuyacn.com:7285/',
+  const mqEnv = parseMqEnv();
+  const consumer = new TuyaWebsocketConsumer({
     accessId,
     accessKey,
-    topic,
+    env: mqEnv,
+    wsBaseUrl: process.env.TUYA_MQ_WS_URL,
   });
 
   const forward = async (message: DeviceBusMessage): Promise<void> => {
     if (!isAllowedProduct(message.productId, allowedProducts)) {
+      console.log(
+        `Skipped ${message.bizCode || 'unknown'} device=${message.deviceId} product=${message.productId ?? '-'} (not in whitelist)`,
+      );
       return;
     }
     await kafka.send(message);
+    console.log(`Forwarded ${message.bizCode} device=${message.deviceId}`);
   };
 
   const shutdown = async (signal: string) => {
     console.log(`Received ${signal}; shutting down bridge...`);
-    await pulsar.stop();
+    await consumer.stop();
     await kafka.disconnect();
     process.exit(0);
   };
@@ -71,8 +72,8 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  console.log(`Bridge started: Tuya Pulsar → Redpanda (live), topic=${topic}`);
-  await pulsar.start(forward);
+  console.log(`Bridge started: Tuya MQ WebSocket (${mqEnv}) → Redpanda (live)`);
+  await consumer.start(forward);
 }
 
 main().catch((err) => {

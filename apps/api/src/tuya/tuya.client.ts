@@ -32,8 +32,8 @@ export interface TuyaClient {
   ): Promise<unknown>;
   listDevicesByProduct(
     productId: string,
-    page: number,
-  ): Promise<{ list: TuyaDeviceSummary[]; total: number }>;
+    pageOrCursor?: number | { lastId?: string; pageSize?: number },
+  ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }>;
   getDeviceUsers(deviceId: string): Promise<string[]>;
 }
 
@@ -83,6 +83,11 @@ export class TuyaLiveClient implements TuyaClient {
     if (!res.success) {
       const code = (res as { code?: number }).code;
       const msg = (res as { msg?: string }).msg ?? 'unknown';
+      if (code === 28841002) {
+        throw new Error(
+          `涂鸦 IoT Core 未开通或试用已到期 [${code}]。请到云开发 → 云服务 → IoT Core 延长试用后再同步单设备。`,
+        );
+      }
       throw new Error(`Tuya getDevice failed for ${deviceId}: [${code}] ${msg}`);
     }
     const result = res.result ?? {};
@@ -93,8 +98,8 @@ export class TuyaLiveClient implements TuyaClient {
     return {
       deviceId: String(result.id ?? deviceId),
       productId,
-      name: String(result.name ?? ''),
-      online: Boolean(result.online),
+      name: String(result.custom_name ?? result.customName ?? result.name ?? ''),
+      online: Boolean(result.is_online ?? result.isOnline ?? result.online),
       uuid: result.uuid ? String(result.uuid) : undefined,
       category: result.category ? String(result.category) : undefined,
     };
@@ -139,41 +144,82 @@ export class TuyaLiveClient implements TuyaClient {
 
   async listDevicesByProduct(
     productId: string,
-    page: number,
-  ): Promise<{ list: TuyaDeviceSummary[]; total: number }> {
+    pageOrCursor: number | { lastId?: string; pageSize?: number } = 1,
+  ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }> {
     if (!isAllowedProduct(productId, this.allowedProducts)) {
       return { list: [], total: 0 };
     }
-    const pageSize = 20;
-    const res = await this.context.request<{
+
+    // Prefer Cloud Development device list (IoT Core). Cursor via last_id.
+    // Numeric `page` kept for mock/tests: page>1 returns empty for live (callers should use lastId).
+    const pageSize =
+      typeof pageOrCursor === 'object' ? (pageOrCursor.pageSize ?? 20) : 20;
+    const lastId = typeof pageOrCursor === 'object' ? pageOrCursor.lastId : undefined;
+    if (typeof pageOrCursor === 'number' && pageOrCursor > 1) {
+      return { list: [], total: 0 };
+    }
+
+    const query: Record<string, string | number> = {
+      product_ids: productId,
+      page_size: pageSize,
+    };
+    if (lastId) {
+      query.last_id = lastId;
+    }
+
+    const res = await this.context.request<Array<Record<string, unknown>> | {
+      list?: Array<Record<string, unknown>>;
       devices?: Array<Record<string, unknown>>;
       total?: number;
     }>({
       method: 'GET',
-      path: '/v1.0/iot-03/devices',
-      query: {
-        product_id: productId,
-        page_no: page,
-        page_size: pageSize,
-      },
+      path: '/v2.0/cloud/thing/device',
+      query,
     });
+
     if (!res.success) {
       const code = (res as { code?: number }).code;
       const msg = (res as { msg?: string }).msg ?? 'unknown';
       this.logger.warn(`listDevicesByProduct failed for ${productId}: code=${code} msg=${msg}`);
+      if (code === 28841002) {
+        throw new Error(
+          `涂鸦 IoT Core 未开通或试用已到期 [${code}]。消息队列仍可独立工作；请到云开发 → 云服务 → IoT Core 申请延长试用后，再点「触发同步」。也可先把真实 productId 加入 TUYA_PRODUCT_IDS，靠 bridge 事件入库。`,
+        );
+      }
       throw new Error(`涂鸦 OpenAPI 失败 (${productId}): [${code}] ${msg}`);
     }
-    const result = (res.result ?? {}) as Record<string, unknown>;
-    const devices = (result.devices ?? result.list ?? []) as Array<Record<string, unknown>>;
+
+    const raw = res.result;
+    const devices = Array.isArray(raw)
+      ? raw
+      : (((raw as { devices?: Array<Record<string, unknown>>; list?: Array<Record<string, unknown>> })
+          ?.devices ??
+          (raw as { list?: Array<Record<string, unknown>> })?.list ??
+          []) as Array<Record<string, unknown>>);
+
     const list = devices
       .map((d) => ({
         deviceId: String(d.id ?? d.device_id ?? ''),
         productId: String(d.product_id ?? d.productId ?? productId),
-        name: String(d.name ?? ''),
-        online: d.online != null ? Boolean(d.online) : undefined,
+        name: String(d.custom_name ?? d.customName ?? d.name ?? ''),
+        online:
+          d.is_online != null
+            ? Boolean(d.is_online)
+            : d.isOnline != null
+              ? Boolean(d.isOnline)
+              : d.online != null
+                ? Boolean(d.online)
+                : undefined,
       }))
       .filter((d) => d.deviceId && isAllowedProduct(d.productId, this.allowedProducts));
-    return { list, total: Number(result.total ?? list.length) };
+
+    const nextLastId = list.length > 0 ? list[list.length - 1].deviceId : undefined;
+    const total =
+      !Array.isArray(raw) && raw && typeof (raw as { total?: number }).total === 'number'
+        ? Number((raw as { total: number }).total)
+        : list.length;
+
+    return { list, total, nextLastId };
   }
 
   async getDeviceUsers(deviceId: string): Promise<string[]> {

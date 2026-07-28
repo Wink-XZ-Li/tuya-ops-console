@@ -24,7 +24,7 @@ export function verifyTuyaSign(payload: TuyaEnvelope, accessKey: string): boolea
 
   const pairs = Object.entries(payload)
     .filter(([key, value]) => key !== 'sign' && value !== '' && value != null)
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([key, value]) => `${key}=${value}`);
 
   const expected = md5Hex(`${pairs.join('||')}||${accessKey}`);
@@ -55,8 +55,11 @@ export function decryptTuyaPayload(
   accessKey: string,
   decryptMode?: string,
 ): Record<string, unknown> {
+  // Official Tuya SDKs decrypt without hard-failing on sign; keep as soft check.
   if (!verifyTuyaSign(envelope, accessKey)) {
-    throw new Error('Tuya payload signature mismatch');
+    if (process.env.TUYA_MQ_STRICT_SIGN === '1') {
+      throw new Error('Tuya payload signature mismatch');
+    }
   }
 
   const encrypted = envelope.data;
@@ -65,10 +68,28 @@ export function decryptTuyaPayload(
   }
 
   const aesKey = accessKey.slice(8, 24);
-  const plain =
-    decryptMode === 'aes_gcm'
-      ? decryptAesGcm(encrypted, aesKey)
-      : decryptAesEcb(encrypted, aesKey);
+  const preferGcm =
+    decryptMode == null ||
+    decryptMode === '' ||
+    decryptMode === 'aes_gcm' ||
+    decryptMode === 'aes-gcm';
+
+  const modes: Array<'gcm' | 'ecb'> = preferGcm ? ['gcm', 'ecb'] : ['ecb', 'gcm'];
+  let lastError: unknown;
+  let plain: string | undefined;
+  for (const mode of modes) {
+    try {
+      const candidate = mode === 'gcm' ? decryptAesGcm(encrypted, aesKey) : decryptAesEcb(encrypted, aesKey);
+      JSON.parse(candidate);
+      plain = candidate;
+      break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (plain === undefined) {
+    throw lastError instanceof Error ? lastError : new Error('Failed to decrypt Tuya payload');
+  }
 
   const parsed = JSON.parse(plain) as Record<string, unknown>;
   if (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) {

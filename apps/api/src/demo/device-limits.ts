@@ -1,2 +1,2 @@
-/** Demo cap: total devices across all products must stay below 10. */
-export const MAX_DEVICES = 10;
+/** Soft cap aligned with free-tier controllable / project device scale. */
+export const MAX_DEVICES = 50;

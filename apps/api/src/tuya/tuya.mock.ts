@@ -77,16 +77,24 @@ export class TuyaMockClient implements TuyaClient {
 
   async listDevicesByProduct(
     productId: string,
-    page: number,
-  ): Promise<{ list: TuyaDeviceSummary[]; total: number }> {
+    pageOrCursor: number | { lastId?: string; pageSize?: number } = 1,
+  ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }> {
     if (!isAllowedProduct(productId, this.allowedProducts)) {
       return { list: [], total: 0 };
     }
     const filtered = MOCK_DEVICES.filter((d) => d.productId === productId);
-    const pageSize = 20;
-    const start = (page - 1) * pageSize;
+    const pageSize =
+      typeof pageOrCursor === 'object' ? (pageOrCursor.pageSize ?? 20) : 20;
+    const page = typeof pageOrCursor === 'number' ? pageOrCursor : 1;
+    const lastId = typeof pageOrCursor === 'object' ? pageOrCursor.lastId : undefined;
+    let start = (page - 1) * pageSize;
+    if (lastId) {
+      const idx = filtered.findIndex((d) => d.deviceId === lastId);
+      start = idx >= 0 ? idx + 1 : filtered.length;
+    }
     const list = filtered.slice(start, start + pageSize);
-    return { list, total: filtered.length };
+    const nextLastId = list.length > 0 ? list[list.length - 1].deviceId : undefined;
+    return { list, total: filtered.length, nextLastId };
   }
 
   async getDeviceUsers(deviceId: string): Promise<string[]> {

@@ -51,21 +51,16 @@ export class SyncService {
         break;
       }
 
-      let page = 1;
+      let lastId: string | undefined;
 
       for (;;) {
+        const { list, total, nextLastId } = await this.tuya.listDevicesByProduct(productId, {
+          lastId,
+          pageSize: PAGE_SIZE,
+        });
+
         const globalCount = await this.prisma.device.count();
-        if (globalCount >= MAX_DEVICES) {
-          this.logger.warn(
-            `Global device count ${globalCount} >= ${MAX_DEVICES}, stopping reconcile`,
-          );
-          stoppedEarly = true;
-          break;
-        }
-
-        const { list, total } = await this.tuya.listDevicesByProduct(productId, page);
-
-        if (page === 1 && total + globalCount > MAX_DEVICES) {
+        if (!lastId && total + globalCount > MAX_DEVICES) {
           this.logger.warn(
             `Product ${productId}: ${total} devices would exceed global cap (${globalCount}/${MAX_DEVICES}), truncating reconcile`,
           );
@@ -78,12 +73,12 @@ export class SyncService {
             select: { id: true },
           });
 
-          if (!existing && currentCount >= MAX_DEVICES - 1) {
+          if (!existing && currentCount >= MAX_DEVICES) {
             this.logger.warn(
-              `Skipping new device ${summary.deviceId}: global count ${currentCount} would reach ${MAX_DEVICES}`,
+              `Skipping new device ${summary.deviceId}: global count ${currentCount} >= ${MAX_DEVICES}`,
             );
             stoppedEarly = true;
-            break;
+            continue;
           }
 
           const device = await this.upsertDevice(summary, syncedAt);
@@ -92,13 +87,10 @@ export class SyncService {
           bindingsSynced += await this.replaceBindings(device.id, users, syncedAt);
         }
 
-        if (stoppedEarly) {
+        if (list.length === 0 || list.length < PAGE_SIZE || !nextLastId || nextLastId === lastId) {
           break;
         }
-        if (page * PAGE_SIZE >= total || list.length === 0) {
-          break;
-        }
-        page += 1;
+        lastId = nextLastId;
       }
     }
 

@@ -38,9 +38,9 @@ export class EventHandlerService {
     });
     if (!existing) {
       const count = await this.prisma.device.count();
-      if (count >= MAX_DEVICES - 1) {
+      if (count >= MAX_DEVICES) {
         this.logger.warn(
-          `Skipping upsert for new device ${message.deviceId}: global device count ${count} >= ${MAX_DEVICES - 1}`,
+          `Skipping upsert for new device ${message.deviceId}: global device count ${count} >= ${MAX_DEVICES}`,
         );
         return;
       }

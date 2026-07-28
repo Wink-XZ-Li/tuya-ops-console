@@ -1,7 +1,7 @@
 import { SyncService } from './sync.service';
 
 describe('SyncService', () => {
-  it('skips new devices when global count would reach 10', async () => {
+  it('skips new devices when global count would reach MAX_DEVICES', async () => {
     const tuya = {
       listDevicesByProduct: jest.fn().mockResolvedValue({
         list: [
@@ -13,7 +13,8 @@ describe('SyncService', () => {
     };
     const prisma = {
       device: {
-        count: jest.fn().mockResolvedValue(9),
+        count: jest.fn().mockResolvedValue(50),
+        findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn().mockResolvedValue(null),
         upsert: jest.fn(),
       },
@@ -45,7 +46,8 @@ describe('SyncService', () => {
     };
     const prisma = {
       device: {
-        count: jest.fn().mockResolvedValue(9),
+        count: jest.fn().mockResolvedValue(50),
+        findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn().mockResolvedValue(existing),
         upsert: jest.fn().mockResolvedValue(existing),
       },
