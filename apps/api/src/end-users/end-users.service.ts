@@ -1,7 +1,15 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { TUYA_CLIENT, TuyaClient } from '../tuya/tuya.client';
+import {
+  isAllowedProduct,
+  parseProductIds,
+  TUYA_CLIENT,
+  TuyaClient,
+  TuyaUserDevice,
+  TuyaUserHome,
+  TuyaUserProfile,
+} from '../tuya/tuya.client';
 
 export interface ListEndUsersParams {
   q?: string;
@@ -9,8 +17,15 @@ export interface ListEndUsersParams {
   pageSize?: number;
 }
 
+export interface CloudDeviceRow extends TuyaUserDevice {
+  inConsole: boolean;
+  allowedProduct: boolean;
+}
+
 @Injectable()
 export class EndUsersService {
+  private readonly allowedProducts = parseProductIds();
+
   constructor(
     private readonly prisma: PrismaService,
     @Inject(TUYA_CLIENT) private readonly tuya: TuyaClient,
@@ -29,6 +44,7 @@ export class EndUsersService {
           OR: [
             { tuyaUid: { contains: params.q } },
             { username: { contains: params.q } },
+            { nickName: { contains: params.q } },
             { mobile: { contains: params.q } },
             { email: { contains: params.q } },
             { remark: { contains: params.q } },
@@ -58,33 +74,61 @@ export class EndUsersService {
     return endUser;
   }
 
+  /**
+   * Live cloud snapshot for detail page: refresh infos into DB, fetch homes + devices.
+   * Does not mutate DeviceBinding.
+   */
+  async getCloudSnapshot(tuyaUid: string) {
+    await this.getByTuyaUid(tuyaUid);
+    const warnings: string[] = [];
+
+    let user = await this.applyProfileFromCloud(tuyaUid).catch((err) => {
+      warnings.push(`资料刷新失败: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
+    if (!user) {
+      user = await this.getByTuyaUid(tuyaUid);
+    }
+
+    let homes: TuyaUserHome[] = [];
+    try {
+      homes = await this.tuya.listUserHomes(tuyaUid);
+    } catch (err) {
+      warnings.push(`家庭列表失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    let cloudDevices: CloudDeviceRow[] = [];
+    try {
+      const devices = await this.tuya.listUserDevices(tuyaUid);
+      cloudDevices = await this.annotateCloudDevices(devices);
+    } catch (err) {
+      warnings.push(`云端设备失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return { user, homes, cloudDevices, warnings };
+  }
+
   async refreshProfile(tuyaUid: string) {
-    const endUser = await this.getByTuyaUid(tuyaUid);
+    await this.getByTuyaUid(tuyaUid);
     const profile = await this.tuya.getUserProfile(tuyaUid);
     if (!profile) {
+      const endUser = await this.getByTuyaUid(tuyaUid);
       return {
         user: endUser,
         refreshed: false,
         message: '云端未返回用户资料（当前项目权限下可能无手机号/昵称）',
       };
     }
-    const updated = await this.prisma.endUser.update({
-      where: { tuyaUid },
-      data: {
-        ...(profile.username ? { username: profile.username } : {}),
-        ...(profile.mobile ? { mobile: profile.mobile } : {}),
-        ...(profile.email ? { email: profile.email } : {}),
-        ...(profile.raw ? { raw: profile.raw as Prisma.InputJsonValue } : {}),
-        syncedAt: new Date(),
-      },
-    });
-    const filled = Boolean(updated.username || updated.mobile || updated.email);
+    const updated = await this.persistProfile(tuyaUid, profile);
+    const filled = Boolean(
+      updated.username || updated.nickName || updated.mobile || updated.email,
+    );
     return {
       user: updated,
       refreshed: true,
       message: filled
-        ? '已尝试刷新云端资料'
-        : '云端接口有响应，但未包含用户名/手机号/邮箱',
+        ? '已刷新云端资料'
+        : '云端接口有响应，但未包含用户名/昵称/手机号/邮箱',
     };
   }
 
@@ -113,6 +157,58 @@ export class EndUsersService {
     return this.prisma.endUser.update({
       where: { tuyaUid },
       data: { remark: remark ?? null },
+    });
+  }
+
+  private async applyProfileFromCloud(tuyaUid: string) {
+    const profile = await this.tuya.getUserProfile(tuyaUid);
+    if (!profile) return null;
+    return this.persistProfile(tuyaUid, profile);
+  }
+
+  private async persistProfile(tuyaUid: string, profile: TuyaUserProfile) {
+    const rawPayload: Record<string, unknown> = {
+      ...(profile.raw ?? {}),
+      ...(profile.userProperties ? { user_properties: profile.userProperties } : {}),
+    };
+
+    return this.prisma.endUser.update({
+      where: { tuyaUid },
+      data: {
+        syncedAt: new Date(),
+        ...(profile.username ? { username: profile.username } : {}),
+        ...(profile.nickName ? { nickName: profile.nickName } : {}),
+        ...(profile.mobile ? { mobile: profile.mobile } : {}),
+        ...(profile.email ? { email: profile.email } : {}),
+        ...(profile.countryCode ? { countryCode: profile.countryCode } : {}),
+        ...(profile.timeZoneId ? { timeZoneId: profile.timeZoneId } : {}),
+        ...(profile.tempUnit != null ? { tempUnit: profile.tempUnit } : {}),
+        ...(profile.avatar ? { avatar: profile.avatar } : {}),
+        ...(profile.cloudCreatedAt ? { cloudCreatedAt: profile.cloudCreatedAt } : {}),
+        ...(profile.cloudUpdatedAt ? { cloudUpdatedAt: profile.cloudUpdatedAt } : {}),
+        raw: rawPayload as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  private async annotateCloudDevices(devices: TuyaUserDevice[]): Promise<CloudDeviceRow[]> {
+    const ids = devices.map((d) => d.deviceId).filter(Boolean);
+    const existing =
+      ids.length === 0
+        ? []
+        : await this.prisma.device.findMany({
+            where: { deviceId: { in: ids } },
+            select: { deviceId: true },
+          });
+    const inConsole = new Set(existing.map((d) => d.deviceId));
+
+    return devices.map((d) => {
+      const productId = d.productId ?? '';
+      return {
+        ...d,
+        inConsole: inConsole.has(d.deviceId),
+        allowedProduct: productId ? isAllowedProduct(productId, this.allowedProducts) : false,
+      };
     });
   }
 }

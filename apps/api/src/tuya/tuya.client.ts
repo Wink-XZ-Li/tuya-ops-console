@@ -18,8 +18,47 @@ export interface TuyaDeviceDetail extends TuyaDeviceSummary {
 export interface TuyaUserProfile {
   tuyaUid: string;
   username?: string;
+  nickName?: string;
   mobile?: string;
   email?: string;
+  countryCode?: string;
+  timeZoneId?: string;
+  tempUnit?: number;
+  avatar?: string;
+  cloudCreatedAt?: Date;
+  cloudUpdatedAt?: Date;
+  userProperties?: Array<{ code: string; value: string }>;
+  raw?: Record<string, unknown>;
+}
+
+export interface TuyaUserHome {
+  homeId: string;
+  name: string;
+  role?: string;
+  lon?: number;
+  lat?: number;
+  geoName?: string;
+  raw?: Record<string, unknown>;
+}
+
+export type TuyaUserDeviceFrom = 'home' | 'sharing' | 'unknown';
+
+/** Sanitized user-owned device (no local_key). */
+export interface TuyaUserDevice {
+  deviceId: string;
+  name?: string;
+  productId?: string;
+  productName?: string;
+  category?: string;
+  online?: boolean;
+  uuid?: string;
+  ownerId?: string;
+  icon?: string;
+  from: TuyaUserDeviceFrom;
+  status?: Array<{ code: string; value: unknown }>;
+  activeTime?: number;
+  createTime?: number;
+  updateTime?: number;
   raw?: Record<string, unknown>;
 }
 
@@ -33,6 +72,12 @@ export interface StandardFunction {
 }
 
 export const TUYA_CLIENT = Symbol('TUYA_CLIENT');
+
+export interface ListAppUsersPage {
+  list: TuyaUserProfile[];
+  hasMore: boolean;
+  total?: number;
+}
 
 export interface TuyaClient {
   getDevice(deviceId: string): Promise<TuyaDeviceDetail>;
@@ -50,6 +95,19 @@ export interface TuyaClient {
   /** Prefer this when syncing — may include nick/mobile from device-user APIs. */
   getDeviceUserProfiles(deviceId: string): Promise<TuyaUserProfile[]>;
   getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null>;
+  /** App users under schema — GET /v1.0/apps/{schema}/users */
+  listAppUsers(params: {
+    schema: string;
+    pageNo?: number;
+    pageSize?: number;
+  }): Promise<ListAppUsersPage>;
+  /** GET /v1.0/users/{uid}/homes */
+  listUserHomes(tuyaUid: string): Promise<TuyaUserHome[]>;
+  /** GET /v1.0/users/{uid}/devices — local_key stripped */
+  listUserDevices(
+    tuyaUid: string,
+    opts?: { from?: 'home' | 'sharing' },
+  ): Promise<TuyaUserDevice[]>;
 }
 
 export function isAllowedProduct(productId: string, allowed: Set<string>): boolean {
@@ -271,8 +329,8 @@ export class TuyaLiveClient implements TuyaClient {
 
   async getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null> {
     const paths = [
-      `/v1.0/users/${tuyaUid}`,
       `/v1.0/users/${tuyaUid}/infos`,
+      `/v1.0/users/${tuyaUid}`,
       `/v1.0/iot-03/users/${tuyaUid}`,
       `/v2.0/cloud/device/member/${tuyaUid}`,
     ];
@@ -287,7 +345,14 @@ export class TuyaLiveClient implements TuyaClient {
         }
         const result = res.result;
         const profile = pickUserFields(tuyaUid, result);
-        if (profile.username || profile.mobile || profile.email || profile.raw) {
+        if (
+          profile.username ||
+          profile.nickName ||
+          profile.mobile ||
+          profile.email ||
+          profile.avatar ||
+          profile.raw
+        ) {
           return profile;
         }
       } catch (err) {
@@ -296,22 +361,256 @@ export class TuyaLiveClient implements TuyaClient {
     }
     return null;
   }
+
+  async listAppUsers(params: {
+    schema: string;
+    pageNo?: number;
+    pageSize?: number;
+  }): Promise<ListAppUsersPage> {
+    const schema = params.schema.trim();
+    if (!schema) {
+      throw new Error('listAppUsers requires schema (TUYA_APP_SCHEMA)');
+    }
+    const pageNo = params.pageNo ?? 1;
+    const pageSize = params.pageSize ?? 100;
+    const query: Record<string, string | number> = {
+      page_no: pageNo,
+      page_size: pageSize,
+    };
+
+    // Prefer v1.0 (full list by page). Fall back to v2.0 30-day window if needed.
+    const paths = [`/v1.0/apps/${schema}/users`, `/v2.0/apps/${schema}/users`];
+    let lastError = 'unknown';
+
+    for (const path of paths) {
+      const pathQuery =
+        path.startsWith('/v2.0/')
+          ? {
+              ...query,
+              start_time: Math.floor(Date.now() / 1000) - 30 * 24 * 3600,
+              end_time: Math.floor(Date.now() / 1000),
+            }
+          : query;
+
+      const res = await this.context.request<{
+        list?: Array<Record<string, unknown>>;
+        has_more?: boolean;
+        hasMore?: boolean;
+        total?: number;
+      }>({
+        method: 'GET',
+        path,
+        query: pathQuery,
+      });
+
+      if (!res.success) {
+        const code = (res as { code?: number }).code;
+        const msg = (res as { msg?: string }).msg ?? 'unknown';
+        lastError = `[${code}] ${msg}`;
+        // 1108 = path not available on this project; try next.
+        if (code === 1108) continue;
+        throw new Error(`Tuya listAppUsers failed: ${lastError}`);
+      }
+
+      const raw = res.result ?? {};
+      const rows = Array.isArray(raw.list) ? raw.list : [];
+      const list: TuyaUserProfile[] = [];
+      for (const row of rows) {
+        const uid = String(row.uid ?? row.tuyaUid ?? row.user_id ?? '');
+        if (!uid) continue;
+        list.push(pickUserFields(uid, row));
+      }
+
+      return {
+        list,
+        hasMore: Boolean(raw.has_more ?? raw.hasMore),
+        total: typeof raw.total === 'number' ? raw.total : undefined,
+      };
+    }
+
+    throw new Error(`Tuya listAppUsers failed: ${lastError}`);
+  }
+
+  async listUserHomes(tuyaUid: string): Promise<TuyaUserHome[]> {
+    const res = await this.context.request<Array<Record<string, unknown>>>({
+      method: 'GET',
+      path: `/v1.0/users/${tuyaUid}/homes`,
+    });
+    if (!res.success) {
+      const code = (res as { code?: number }).code;
+      const msg = (res as { msg?: string }).msg ?? 'unknown';
+      throw new Error(`Tuya listUserHomes failed: [${code}] ${msg}`);
+    }
+    const rows = Array.isArray(res.result) ? res.result : [];
+    return rows.map((row) => {
+      const homeId = String(row.home_id ?? row.homeId ?? row.id ?? '');
+      return {
+        homeId,
+        name: String(row.name ?? '') || homeId || '未命名家庭',
+        role: row.role != null ? String(row.role) : undefined,
+        lon: row.lon != null ? Number(row.lon) : undefined,
+        lat: row.lat != null ? Number(row.lat) : undefined,
+        geoName: row.geo_name != null ? String(row.geo_name) : row.geoName != null ? String(row.geoName) : undefined,
+        raw: row,
+      };
+    }).filter((h) => h.homeId);
+  }
+
+  async listUserDevices(
+    tuyaUid: string,
+    opts?: { from?: 'home' | 'sharing' },
+  ): Promise<TuyaUserDevice[]> {
+    const fromValues: Array<'home' | 'sharing' | undefined> = opts?.from
+      ? [opts.from]
+      : [undefined, 'home', 'sharing'];
+
+    const seen = new Set<string>();
+    const out: TuyaUserDevice[] = [];
+
+    for (const from of fromValues) {
+      const query: Record<string, string | number> = {};
+      if (from) query.from = from === 'sharing' ? 'sharing' : 'home';
+      // Some docs use share vs sharing — try both if needed below.
+
+      let res = await this.context.request<Array<Record<string, unknown>>>({
+        method: 'GET',
+        path: `/v1.0/users/${tuyaUid}/devices`,
+        query: Object.keys(query).length ? query : undefined,
+      });
+
+      if (!res.success && from === 'sharing') {
+        res = await this.context.request<Array<Record<string, unknown>>>({
+          method: 'GET',
+          path: `/v1.0/users/${tuyaUid}/devices`,
+          query: { from: 'share' },
+        });
+      }
+
+      if (!res.success) {
+        const code = (res as { code?: number }).code;
+        const msg = (res as { msg?: string }).msg ?? 'unknown';
+        this.logger.debug(`listUserDevices from=${from ?? 'all'} failed: [${code}] ${msg}`);
+        if (from == null && fromValues.length === 1) {
+          throw new Error(`Tuya listUserDevices failed: [${code}] ${msg}`);
+        }
+        continue;
+      }
+
+      const rows = Array.isArray(res.result) ? res.result : [];
+      for (const row of rows) {
+        const device = sanitizeUserDevice(row, from ?? 'unknown');
+        if (!device.deviceId || seen.has(device.deviceId)) continue;
+        seen.add(device.deviceId);
+        out.push(device);
+      }
+
+      // Unscoped call already returned everything — no need to also fetch home/sharing.
+      if (from == null && rows.length > 0) break;
+    }
+
+    return out;
+  }
+}
+
+function epochToDate(value: unknown): Date | undefined {
+  if (value == null || value === '') return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  // Tuya often returns seconds.
+  const ms = n < 1e12 ? n * 1000 : n;
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? undefined : d;
+}
+
+function sanitizeUserDevice(
+  row: Record<string, unknown>,
+  from: TuyaUserDeviceFrom,
+): TuyaUserDevice {
+  const {
+    local_key: _lk1,
+    localKey: _lk2,
+    ...rest
+  } = row;
+  void _lk1;
+  void _lk2;
+
+  const statusRaw = rest.status;
+  const status = Array.isArray(statusRaw)
+    ? statusRaw
+        .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
+        .map((s) => ({ code: String(s.code ?? ''), value: s.value }))
+        .filter((s) => s.code)
+    : undefined;
+
+  return {
+    deviceId: String(rest.id ?? rest.device_id ?? rest.deviceId ?? ''),
+    name: rest.name != null ? String(rest.name) : undefined,
+    productId: rest.product_id != null ? String(rest.product_id) : rest.productId != null ? String(rest.productId) : undefined,
+    productName:
+      rest.product_name != null
+        ? String(rest.product_name)
+        : rest.productName != null
+          ? String(rest.productName)
+          : undefined,
+    category: rest.category != null ? String(rest.category) : undefined,
+    online:
+      rest.online != null
+        ? Boolean(rest.online)
+        : rest.is_online != null
+          ? Boolean(rest.is_online)
+          : undefined,
+    uuid: rest.uuid != null ? String(rest.uuid) : undefined,
+    ownerId: rest.owner_id != null ? String(rest.owner_id) : rest.ownerId != null ? String(rest.ownerId) : undefined,
+    icon: rest.icon != null ? String(rest.icon) : undefined,
+    from,
+    status,
+    activeTime: rest.active_time != null ? Number(rest.active_time) : undefined,
+    createTime: rest.create_time != null ? Number(rest.create_time) : undefined,
+    updateTime: rest.update_time != null ? Number(rest.update_time) : undefined,
+    raw: rest as Record<string, unknown>,
+  };
 }
 
 function pickUserFields(tuyaUid: string, result: Record<string, unknown>): TuyaUserProfile {
+  const propsRaw = result.user_properties ?? result.userProperties;
+  const userProperties = Array.isArray(propsRaw)
+    ? propsRaw
+        .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+        .map((p) => ({
+          code: String(p.code ?? ''),
+          value: String(p.value ?? ''),
+        }))
+        .filter((p) => p.code)
+    : undefined;
+
+  const tempUnitRaw = result.temp_unit ?? result.tempUnit;
+  const tempUnit =
+    tempUnitRaw != null && tempUnitRaw !== '' && Number.isFinite(Number(tempUnitRaw))
+      ? Number(tempUnitRaw)
+      : undefined;
+
   return {
     tuyaUid,
     username:
       String(
-        result.nick_name ??
-          result.nickname ??
-          result.user_name ??
+        result.user_name ??
           result.username ??
           result.name ??
           '',
       ) || undefined,
+    nickName:
+      String(result.nick_name ?? result.nickname ?? result.nickName ?? '') || undefined,
     mobile: String(result.mobile ?? result.phone ?? result.mobile_name ?? '') || undefined,
     email: String(result.email ?? '') || undefined,
+    countryCode:
+      String(result.country_code ?? result.countryCode ?? '') || undefined,
+    timeZoneId:
+      String(result.time_zone_id ?? result.timeZoneId ?? '') || undefined,
+    tempUnit,
+    avatar: String(result.avatar ?? '') || undefined,
+    cloudCreatedAt: epochToDate(result.create_time ?? result.createTime),
+    cloudUpdatedAt: epochToDate(result.update_time ?? result.updateTime),
+    userProperties,
     raw: result,
   };
 }

@@ -1,0 +1,8 @@
+-- AlterTable
+ALTER TABLE `EndUser` ADD COLUMN `nickName` VARCHAR(191) NULL,
+    ADD COLUMN `countryCode` VARCHAR(191) NULL,
+    ADD COLUMN `timeZoneId` VARCHAR(191) NULL,
+    ADD COLUMN `tempUnit` INTEGER NULL,
+    ADD COLUMN `avatar` VARCHAR(512) NULL,
+    ADD COLUMN `cloudCreatedAt` DATETIME(3) NULL,
+    ADD COLUMN `cloudUpdatedAt` DATETIME(3) NULL;

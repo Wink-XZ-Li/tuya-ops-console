@@ -2,10 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import {
   isAllowedProduct,
   parseProductIds,
+  ListAppUsersPage,
   StandardFunction,
   TuyaClient,
   TuyaDeviceDetail,
   TuyaDeviceSummary,
+  TuyaUserDevice,
+  TuyaUserHome,
   TuyaUserProfile,
 } from './tuya.client';
 
@@ -111,9 +114,105 @@ export class TuyaMockClient implements TuyaClient {
     return {
       tuyaUid,
       username: `user-${tuyaUid.slice(-4)}`,
+      nickName: `昵称-${tuyaUid.slice(-4)}`,
       mobile: tuyaUid.includes('001') ? '13800000001' : undefined,
       email: undefined,
+      countryCode: '86',
+      timeZoneId: 'Asia/Shanghai',
+      tempUnit: 1,
+      avatar: undefined,
+      cloudCreatedAt: new Date('2024-01-01T00:00:00Z'),
+      cloudUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+      userProperties: [
+        { code: 'dataAuthorization', value: '1' },
+        { code: 'marketingPush', value: '0' },
+      ],
       raw: { mock: true },
     };
+  }
+
+  async listAppUsers(params: {
+    schema: string;
+    pageNo?: number;
+    pageSize?: number;
+  }): Promise<ListAppUsersPage> {
+    if (!params.schema.trim()) {
+      throw new Error('listAppUsers requires schema (TUYA_APP_SCHEMA)');
+    }
+    const pageNo = params.pageNo ?? 1;
+    if (pageNo > 1) {
+      return { list: [], hasMore: false, total: 3 };
+    }
+    const list: TuyaUserProfile[] = [
+      {
+        tuyaUid: 'ay-mock-user-001',
+        username: 'mock-user-001',
+        nickName: 'Mock一号',
+        mobile: '13800000001',
+        raw: { mock: true },
+      },
+      {
+        tuyaUid: 'ay-mock-user-002',
+        username: 'mock-user-002',
+        nickName: 'Mock二号',
+        email: 'mock2@example.com',
+        raw: { mock: true },
+      },
+      {
+        tuyaUid: 'ay-mock-user-003',
+        username: 'mock-user-003',
+        nickName: 'Mock三号',
+        raw: { mock: true },
+      },
+    ];
+    return { list, hasMore: false, total: list.length };
+  }
+
+  async listUserHomes(tuyaUid: string): Promise<TuyaUserHome[]> {
+    return [
+      {
+        homeId: `home-${tuyaUid.slice(-4)}`,
+        name: '我的家',
+        role: 'OWNER',
+        lon: 120.06,
+        lat: 30.3,
+        geoName: '杭州市（mock）',
+        raw: { mock: true },
+      },
+    ];
+  }
+
+  async listUserDevices(
+    tuyaUid: string,
+    opts?: { from?: 'home' | 'sharing' },
+  ): Promise<TuyaUserDevice[]> {
+    const bound = Object.entries(MOCK_DEVICE_USERS)
+      .filter(([, uids]) => uids.includes(tuyaUid) || tuyaUid.startsWith('ay-mock'))
+      .map(([deviceId]) => deviceId);
+    const ids =
+      bound.length > 0
+        ? bound
+        : MOCK_DEVICES.slice(0, 2).map((d) => d.deviceId);
+
+    const out: TuyaUserDevice[] = [];
+    for (const deviceId of ids) {
+      const d = MOCK_DEVICES.find((x) => x.deviceId === deviceId);
+      if (!d) continue;
+      const from: TuyaUserDevice['from'] =
+        opts?.from ?? (deviceId.endsWith('2') ? 'sharing' : 'home');
+      if (opts?.from && opts.from !== from && !tuyaUid.startsWith('ay-mock')) {
+        continue;
+      }
+      out.push({
+        deviceId: d.deviceId,
+        name: d.name,
+        productId: d.productId,
+        online: d.online,
+        from: opts?.from ?? from,
+        status: MOCK_STATUS[d.deviceId],
+        raw: { mock: true },
+      });
+    }
+    return out;
   }
 }

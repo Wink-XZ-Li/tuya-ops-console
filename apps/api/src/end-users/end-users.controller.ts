@@ -23,6 +23,12 @@ export class EndUsersController {
     return this.endUsersService.getByTuyaUid(tuyaUid);
   }
 
+  @Get(':tuyaUid/cloud-snapshot')
+  @Roles('readonly', 'operator', 'admin')
+  cloudSnapshot(@Param('tuyaUid') tuyaUid: string) {
+    return this.endUsersService.getCloudSnapshot(tuyaUid);
+  }
+
   @Post(':tuyaUid/refresh-profile')
   @Roles('operator', 'admin')
   refreshProfile(@Param('tuyaUid') tuyaUid: string) {

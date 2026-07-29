@@ -45,4 +45,14 @@ export class SyncController {
       throw new BadRequestException(e instanceof Error ? e.message : String(e));
     }
   }
+
+  @Post('reconcile-users')
+  @Roles('admin')
+  async reconcileUsers(@Req() req: { user: { id: string } }) {
+    try {
+      return await this.syncService.reconcileUsers(req.user.id);
+    } catch (e) {
+      throw new BadRequestException(e instanceof Error ? e.message : String(e));
+    }
+  }
 }

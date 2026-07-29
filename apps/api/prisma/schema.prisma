@@ -43,17 +43,24 @@ model AdminUser {
 }
 
 model EndUser {
-  id          String          @id @default(cuid())
-  tuyaUid     String          @unique
-  username    String?
-  mobile      String?
-  email       String?
-  remark      String?         @db.VarChar(512)
-  raw         Json?
-  syncedAt    DateTime        @default(now())
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  bindings    DeviceBinding[]
+  id            String          @id @default(cuid())
+  tuyaUid       String          @unique
+  username      String?
+  nickName      String?
+  mobile        String?
+  email         String?
+  countryCode   String?
+  timeZoneId    String?
+  tempUnit      Int?
+  avatar        String?         @db.VarChar(512)
+  cloudCreatedAt DateTime?
+  cloudUpdatedAt DateTime?
+  remark        String?         @db.VarChar(512)
+  raw           Json?
+  syncedAt      DateTime        @default(now())
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  bindings      DeviceBinding[]
 }
 
 model Device {

@@ -126,6 +126,90 @@ export class SyncService {
     return { devicesSynced, bindingsSynced, purgedMock, purgedDemoUsers };
   }
 
+  /**
+   * Full App user sync via GET /v1.0/apps/{schema}/users (page_no until has_more=false).
+   * Does not touch devices or bindings.
+   */
+  async reconcileUsers(adminUserId: string) {
+    const schema = (process.env.TUYA_APP_SCHEMA ?? '').trim();
+    if (!schema) {
+      throw new Error(
+        '未配置 TUYA_APP_SCHEMA（App 渠道标识符）。请在 .env 填写后重启 API，再点「同步用户」。',
+      );
+    }
+
+    const syncedAt = new Date();
+    let usersSynced = 0;
+    let pages = 0;
+    let pageNo = 1;
+    let reportedTotal: number | undefined;
+
+    for (;;) {
+      const page = await this.tuya.listAppUsers({
+        schema,
+        pageNo,
+        pageSize: 100,
+      });
+      pages += 1;
+      if (typeof page.total === 'number') reportedTotal = page.total;
+
+      for (const profile of page.list) {
+        if (!profile.tuyaUid || profile.tuyaUid.startsWith('uid-demo-')) continue;
+        await this.prisma.endUser.upsert({
+          where: { tuyaUid: profile.tuyaUid },
+          update: {
+            syncedAt,
+            ...(profile.username ? { username: profile.username } : {}),
+            ...(profile.nickName ? { nickName: profile.nickName } : {}),
+            ...(profile.mobile ? { mobile: profile.mobile } : {}),
+            ...(profile.email ? { email: profile.email } : {}),
+            ...(profile.countryCode ? { countryCode: profile.countryCode } : {}),
+            ...(profile.timeZoneId ? { timeZoneId: profile.timeZoneId } : {}),
+            ...(profile.tempUnit != null ? { tempUnit: profile.tempUnit } : {}),
+            ...(profile.avatar ? { avatar: profile.avatar } : {}),
+            ...(profile.cloudCreatedAt ? { cloudCreatedAt: profile.cloudCreatedAt } : {}),
+            ...(profile.cloudUpdatedAt ? { cloudUpdatedAt: profile.cloudUpdatedAt } : {}),
+            ...(profile.raw ? { raw: profile.raw as Prisma.InputJsonValue } : {}),
+          },
+          create: {
+            tuyaUid: profile.tuyaUid,
+            syncedAt,
+            username: profile.username,
+            nickName: profile.nickName,
+            mobile: profile.mobile,
+            email: profile.email,
+            countryCode: profile.countryCode,
+            timeZoneId: profile.timeZoneId,
+            tempUnit: profile.tempUnit,
+            avatar: profile.avatar,
+            cloudCreatedAt: profile.cloudCreatedAt,
+            cloudUpdatedAt: profile.cloudUpdatedAt,
+            raw: profile.raw ? (profile.raw as Prisma.InputJsonValue) : undefined,
+          },
+        });
+        usersSynced += 1;
+      }
+
+      if (!page.hasMore || page.list.length === 0) break;
+      pageNo += 1;
+      if (pages >= 500) {
+        this.logger.warn('listAppUsers page safety cap (500) reached; stopping');
+        break;
+      }
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        adminUserId,
+        action: 'sync.reconcileUsers',
+        resource: 'end-users',
+        detail: { usersSynced, pages, schema, total: reportedTotal } as Prisma.InputJsonValue,
+      },
+    });
+
+    return { usersSynced, pages, total: reportedTotal };
+  }
+
   async reconcileDevice(adminUserId: string, deviceId: string) {
     if (process.env.DEMO_MODE !== 'live') {
       throw new Error('reconcileDevice requires DEMO_MODE=live');
@@ -215,7 +299,20 @@ export class SyncService {
 
   private async replaceBindings(
     deviceId: string,
-    users: Array<{ tuyaUid: string; username?: string; mobile?: string; email?: string; raw?: Record<string, unknown> }>,
+    users: Array<{
+      tuyaUid: string;
+      username?: string;
+      nickName?: string;
+      mobile?: string;
+      email?: string;
+      countryCode?: string;
+      timeZoneId?: string;
+      tempUnit?: number;
+      avatar?: string;
+      cloudCreatedAt?: Date;
+      cloudUpdatedAt?: Date;
+      raw?: Record<string, unknown>;
+    }>,
     syncedAt: Date,
   ): Promise<number> {
     const endUserIds: string[] = [];
@@ -226,8 +323,15 @@ export class SyncService {
 
       const profile = await this.tuya.getUserProfile(tuyaUid);
       const username = profile?.username || seed.username;
+      const nickName = profile?.nickName || seed.nickName;
       const mobile = profile?.mobile || seed.mobile;
       const email = profile?.email || seed.email;
+      const countryCode = profile?.countryCode || seed.countryCode;
+      const timeZoneId = profile?.timeZoneId || seed.timeZoneId;
+      const tempUnit = profile?.tempUnit ?? seed.tempUnit;
+      const avatar = profile?.avatar || seed.avatar;
+      const cloudCreatedAt = profile?.cloudCreatedAt || seed.cloudCreatedAt;
+      const cloudUpdatedAt = profile?.cloudUpdatedAt || seed.cloudUpdatedAt;
       const raw = profile?.raw || seed.raw;
 
       const endUser = await this.prisma.endUser.upsert({
@@ -235,16 +339,30 @@ export class SyncService {
         update: {
           syncedAt,
           ...(username ? { username } : {}),
+          ...(nickName ? { nickName } : {}),
           ...(mobile ? { mobile } : {}),
           ...(email ? { email } : {}),
+          ...(countryCode ? { countryCode } : {}),
+          ...(timeZoneId ? { timeZoneId } : {}),
+          ...(tempUnit != null ? { tempUnit } : {}),
+          ...(avatar ? { avatar } : {}),
+          ...(cloudCreatedAt ? { cloudCreatedAt } : {}),
+          ...(cloudUpdatedAt ? { cloudUpdatedAt } : {}),
           ...(raw ? { raw: raw as Prisma.InputJsonValue } : {}),
         },
         create: {
           tuyaUid,
           syncedAt,
           username,
+          nickName,
           mobile,
           email,
+          countryCode,
+          timeZoneId,
+          tempUnit,
+          avatar,
+          cloudCreatedAt,
+          cloudUpdatedAt,
           raw: raw ? (raw as Prisma.InputJsonValue) : undefined,
         },
       });
