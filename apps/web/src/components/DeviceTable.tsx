@@ -47,12 +47,12 @@ export function DeviceTable({ items }: Props) {
           {items.map((d) => (
             <tr key={d.deviceId}>
               <td>
-                <Link to={`/devices/${encodeURIComponent(d.deviceId)}`}>
+                <Link className="mono" to={`/devices/${encodeURIComponent(d.deviceId)}`}>
                   {d.deviceId}
                 </Link>
               </td>
               <td>{d.name ?? '—'}</td>
-              <td>{d.productId}</td>
+              <td className="mono">{d.productId}</td>
               <td>
                 <span
                   className={

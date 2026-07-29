@@ -2,17 +2,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, qs } from '../api/client';
 import { DeviceFunction } from '../components/CommandPanel';
+import { MultiSelect } from '../components/MultiSelect';
 import { StatusPanel } from '../components/StatusPanel';
 import { getRole } from '../auth/storage';
 import {
   DEVICE_EVENT_BIZ_CODES,
   formatBizCodeLabel,
 } from '../constants/device-event-biz-codes';
-import {
-  formatProductDpLabel,
-  getProductDps,
-} from '../constants/product-dp-schemas';
-
+import { getProductDps } from '../constants/product-dp-schemas';
 type DeviceDetail = {
   deviceId: string;
   productId: string;
@@ -63,6 +60,26 @@ export function DeviceDetailPage() {
   const productDps = useMemo(
     () => (device?.productId ? getProductDps(device.productId) : []),
     [device?.productId],
+  );
+
+  const bizCodeOptions = useMemo(
+    () =>
+      DEVICE_EVENT_BIZ_CODES.map((item) => ({
+        value: item.code,
+        label: item.code,
+        meta: item.label,
+      })),
+    [],
+  );
+
+  const dpOptions = useMemo(
+    () =>
+      productDps.map((dp) => ({
+        value: dp.code,
+        label: `${dp.id} · ${dp.code}`,
+        meta: dp.name,
+      })),
+    [productDps],
   );
 
   const loadEvents = useCallback(
@@ -161,12 +178,6 @@ export function DeviceDetailPage() {
     void loadEvents(deviceId, { bizCodes, dpIds, from, to });
   }
 
-  function toggleBizCode(code: string) {
-    setBizCodes((prev) =>
-      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
-    );
-  }
-
   return (
     <div className="stack">
       <div className="page-header">
@@ -181,11 +192,11 @@ export function DeviceDetailPage() {
               <h2 style={{ marginTop: 0, fontSize: '1.05rem' }}>基本信息</h2>
               <dl className="kv">
                 <dt>deviceId</dt>
-                <dd>{device.deviceId}</dd>
+                <dd className="mono">{device.deviceId}</dd>
                 <dt>名称</dt>
                 <dd>{device.name ?? '—'}</dd>
                 <dt>productId</dt>
-                <dd>{device.productId}</dd>
+                <dd className="mono">{device.productId}</dd>
                 <dt>网络状态</dt>
                 <dd>{device.onlineStatus}</dd>
                 <dt>信号强度</dt>
@@ -264,95 +275,40 @@ export function DeviceDetailPage() {
               设备日志 <span className="hint">共 {eventsTotal} 条 · 保留 7 天</span>
             </h2>
             <form className="filters" onSubmit={onFilterEvents}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', minWidth: 280 }}>
-                <label className="muted" style={{ fontSize: '0.85rem' }}>
-                  BizCode（消息类型）· 可多选
-                </label>
-                <select
-                  multiple
-                  size={8}
-                  value={bizCodes}
-                  onChange={(e) =>
-                    setBizCodes(Array.from(e.target.selectedOptions, (o) => o.value))
-                  }
-                  style={{ minHeight: 140 }}
-                >
-                  {DEVICE_EVENT_BIZ_CODES.map((item) => (
-                    <option key={item.code} value={item.code}>
-                      {item.code}（{item.label}）
-                    </option>
-                  ))}
-                </select>
-                <div className="row gap">
-                  <button
-                    type="button"
-                    className="btn secondary"
-                    onClick={() => setBizCodes([])}
-                  >
-                    清空类型
-                  </button>
-                  {bizCodes.includes('devicePropertyMessage') ? null : (
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      onClick={() => toggleBizCode('devicePropertyMessage')}
-                    >
-                      快捷：设备上报属性
-                    </button>
-                  )}
-                </div>
-              </div>
+              <MultiSelect
+                label="BizCode"
+                hint="消息类型"
+                options={bizCodeOptions}
+                value={bizCodes}
+                onChange={setBizCodes}
+                placeholder="全部类型"
+              />
               {showDpIdFilter && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', minWidth: 260 }}>
-                  <label className="muted" style={{ fontSize: '0.85rem' }}>
-                    dpId <span className="hint">id / code · 可多选</span>
-                  </label>
-                  <select
-                    multiple
-                    size={Math.min(8, Math.max(4, productDps.length || 4))}
-                    value={dpIds}
-                    onChange={(e) =>
-                      setDpIds(Array.from(e.target.selectedOptions, (o) => o.value))
-                    }
-                    style={{ minHeight: 120 }}
-                  >
-                    {productDps.map((dp) => (
-                      <option key={dp.code} value={dp.code}>
-                        {formatProductDpLabel(dp)}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="row gap">
-                    <button
-                      type="button"
-                      className="btn secondary"
-                      onClick={() => setDpIds([])}
-                    >
-                      清空 DP
-                    </button>
-                  </div>
-                  {productDps.length === 0 && (
-                    <span className="hint">当前 productId 暂无本地 schema</span>
-                  )}
-                </div>
+                <MultiSelect
+                  label="dpId"
+                  hint="id / code"
+                  options={dpOptions}
+                  value={dpIds}
+                  onChange={setDpIds}
+                  placeholder={productDps.length ? '全部 DP' : '无 schema'}
+                  emptyText={
+                    productDps.length === 0 ? '当前 productId 暂无本地 schema' : '无匹配项'
+                  }
+                />
               )}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                <label className="muted" style={{ fontSize: '0.85rem' }}>
-                  开始时间
-                </label>
+              <div className="field">
+                <label className="field-label">开始时间</label>
                 <input
                   type="datetime-local"
                   value={from}
                   onChange={(e) => setFrom(e.target.value)}
                 />
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                <label className="muted" style={{ fontSize: '0.85rem' }}>
-                  结束时间
-                </label>
+              <div className="field">
+                <label className="field-label">结束时间</label>
                 <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
               </div>
-              <button className="btn primary" type="submit" style={{ alignSelf: 'end' }}>
+              <button className="btn primary" type="submit">
                 筛选
               </button>
             </form>
@@ -378,7 +334,7 @@ export function DeviceDetailPage() {
                         <td>{new Date(ev.eventTime).toLocaleString()}</td>
                         <td>{formatBizCodeLabel(ev.bizCode)}</td>
                         <td>
-                          <code style={{ fontSize: '0.75rem' }}>
+                          <code className="mono" style={{ fontSize: '0.75rem' }}>
                             {JSON.stringify(ev.payload).slice(0, 180)}
                             {JSON.stringify(ev.payload).length > 180 ? '…' : ''}
                           </code>

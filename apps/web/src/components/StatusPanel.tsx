@@ -131,8 +131,8 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
               const panelDisabled = Boolean(disabled) || !row.writable;
 
               return (
-                <tr key={row.code}>
-                  <td>{row.code}</td>
+                <tr key={row.code} className="no-click">
+                  <td className="mono">{row.code}</td>
                   <td>
                     {label}
                     <div className="muted" style={{ fontSize: '0.75rem' }}>
@@ -141,7 +141,7 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
                     </div>
                   </td>
                   <td>
-                    <code>{row.value === undefined ? '—' : JSON.stringify(row.value)}</code>
+                    <code className="mono">{row.value === undefined ? '—' : JSON.stringify(row.value)}</code>
                   </td>
                   <td>
                     {row.writable ? (

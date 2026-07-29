@@ -37,6 +37,10 @@ export function LoginPage() {
   return (
     <div className="login-wrap">
       <form className="login-card" onSubmit={onSubmit}>
+        <div className="brand" style={{ marginBottom: '0.25rem' }}>
+          <span className="brand-mark" aria-hidden />
+          Ops Console
+        </div>
         <h1>涂鸦运维台</h1>
         <p>本地 Demo 登录</p>
         <div className="form-row">
