@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { formatFaultInfoDisplay } from '../constants/product-fault-schemas';
+import { formatProductLabel } from '../constants/product-names';
 
 export type DeviceRow = {
   deviceId: string;
@@ -35,7 +36,7 @@ export function DeviceTable({ items }: Props) {
           <tr>
             <th>deviceId</th>
             <th>名称</th>
-            <th>productId</th>
+            <th>产品</th>
             <th>网络状态</th>
             <th>信号强度</th>
             <th>故障情况</th>
@@ -53,7 +54,7 @@ export function DeviceTable({ items }: Props) {
                 </Link>
               </td>
               <td>{d.name ?? '—'}</td>
-              <td className="mono">{d.productId}</td>
+              <td title={d.productId}>{formatProductLabel(d.productId)}</td>
               <td>
                 <span
                   className={

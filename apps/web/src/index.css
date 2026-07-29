@@ -542,6 +542,25 @@ table.data tbody tr.no-click {
   font-family: var(--font-mono);
 }
 
+.log-payload {
+  margin: 0;
+  padding: 0.35rem 0.45rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-height: none;
+  line-height: 1.35;
+}
+
+.log-payload-compact {
+  white-space: pre-wrap;
+}
+
 .status-online {
   color: var(--badge-live);
   font-weight: 600;

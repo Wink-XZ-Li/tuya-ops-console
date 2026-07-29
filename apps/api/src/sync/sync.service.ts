@@ -33,6 +33,20 @@ export class SyncService {
     let bindingsSynced = 0;
     let stoppedEarly = false;
     let purgedMock = 0;
+    let purgedDemoUsers = 0;
+
+    const demoUsers = await this.prisma.endUser.findMany({
+      where: { tuyaUid: { startsWith: 'uid-demo-' } },
+      select: { id: true },
+    });
+    if (demoUsers.length > 0) {
+      const ids = demoUsers.map((u) => u.id);
+      await this.prisma.deviceBinding.deleteMany({ where: { endUserId: { in: ids } } });
+      purgedDemoUsers = (
+        await this.prisma.endUser.deleteMany({ where: { id: { in: ids } } })
+      ).count;
+      this.logger.warn(`Purged ${purgedDemoUsers} uid-demo-* end users`);
+    }
 
     if (process.env.DEMO_MODE === 'live') {
       const mockDevices = await this.prisma.device.findMany({
@@ -89,7 +103,7 @@ export class SyncService {
           const device = await this.upsertDevice(summary, syncedAt);
           devicesSynced += 1;
           await this.refreshDeviceStatusDerived(device.id, summary.deviceId, summary.productId);
-          const users = await this.tuya.getDeviceUsers(summary.deviceId);
+          const users = await this.tuya.getDeviceUserProfiles(summary.deviceId);
           bindingsSynced += await this.replaceBindings(device.id, users, syncedAt);
         }
 
@@ -105,11 +119,11 @@ export class SyncService {
         adminUserId,
         action: 'sync.reconcile',
         resource: 'sync',
-        detail: { devicesSynced, bindingsSynced, purgedMock } as Prisma.InputJsonValue,
+        detail: { devicesSynced, bindingsSynced, purgedMock, purgedDemoUsers } as Prisma.InputJsonValue,
       },
     });
 
-    return { devicesSynced, bindingsSynced, purgedMock };
+    return { devicesSynced, bindingsSynced, purgedMock, purgedDemoUsers };
   }
 
   async reconcileDevice(adminUserId: string, deviceId: string) {
@@ -119,7 +133,7 @@ export class SyncService {
     const summary = await this.tuya.getDevice(deviceId);
     const device = await this.upsertDevice(summary, new Date());
     await this.refreshDeviceStatusDerived(device.id, deviceId, summary.productId);
-    const users = await this.tuya.getDeviceUsers(deviceId);
+    const users = await this.tuya.getDeviceUserProfiles(deviceId);
     const bindingsSynced = await this.replaceBindings(device.id, users, new Date());
     await this.prisma.auditLog.create({
       data: {
@@ -201,29 +215,37 @@ export class SyncService {
 
   private async replaceBindings(
     deviceId: string,
-    tuyaUids: string[],
+    users: Array<{ tuyaUid: string; username?: string; mobile?: string; email?: string; raw?: Record<string, unknown> }>,
     syncedAt: Date,
   ): Promise<number> {
     const endUserIds: string[] = [];
 
-    for (const tuyaUid of tuyaUids) {
+    for (const seed of users) {
+      const tuyaUid = seed.tuyaUid;
+      if (!tuyaUid || tuyaUid.startsWith('uid-demo-')) continue;
+
       const profile = await this.tuya.getUserProfile(tuyaUid);
+      const username = profile?.username || seed.username;
+      const mobile = profile?.mobile || seed.mobile;
+      const email = profile?.email || seed.email;
+      const raw = profile?.raw || seed.raw;
+
       const endUser = await this.prisma.endUser.upsert({
         where: { tuyaUid },
         update: {
           syncedAt,
-          ...(profile?.username ? { username: profile.username } : {}),
-          ...(profile?.mobile ? { mobile: profile.mobile } : {}),
-          ...(profile?.email ? { email: profile.email } : {}),
-          ...(profile?.raw ? { raw: profile.raw as Prisma.InputJsonValue } : {}),
+          ...(username ? { username } : {}),
+          ...(mobile ? { mobile } : {}),
+          ...(email ? { email } : {}),
+          ...(raw ? { raw: raw as Prisma.InputJsonValue } : {}),
         },
         create: {
           tuyaUid,
           syncedAt,
-          username: profile?.username,
-          mobile: profile?.mobile,
-          email: profile?.email,
-          raw: profile?.raw ? (profile.raw as Prisma.InputJsonValue) : undefined,
+          username,
+          mobile,
+          email,
+          raw: raw ? (raw as Prisma.InputJsonValue) : undefined,
         },
       });
       endUserIds.push(endUser.id);

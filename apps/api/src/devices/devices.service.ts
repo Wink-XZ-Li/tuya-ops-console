@@ -3,6 +3,7 @@ import { DeviceOnlineStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TUYA_CLIENT, TuyaClient } from '../tuya/tuya.client';
 import {
+  asRecord,
   deriveFaultFields,
   deriveSignalStrength,
   statusFromPairs,
@@ -105,7 +106,12 @@ export class DevicesService {
     }
 
     const pairs = await this.tuya.getDeviceStatus(deviceId);
-    const status = statusFromPairs(pairs);
+    const fromApi = statusFromPairs(pairs);
+    // Merge so MQ-updated custom DPs are not wiped when OpenAPI returns a subset.
+    const status = {
+      ...asRecord(device.statusJson),
+      ...fromApi,
+    };
     const alerts = await this.prisma.alert.findMany({
       where: { deviceId: device.id, status: { not: 'closed' } },
       select: { title: true },

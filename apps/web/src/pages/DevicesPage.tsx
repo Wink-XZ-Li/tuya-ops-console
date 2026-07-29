@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { api, qs } from '../api/client';
 import { DeviceTable, DeviceRow } from '../components/DeviceTable';
 import { RoleGate } from '../components/RoleGate';
+import { formatProductLabel, PRODUCT_IDS } from '../constants/product-names';
 
 type ListResponse = {
   items: DeviceRow[];
@@ -9,13 +10,6 @@ type ListResponse = {
   page: number;
   pageSize: number;
 };
-
-const PRODUCT_IDS = [
-  '',
-  'uhmj5b0ba31zpme6',
-  'qxjzruuqz40bty7e',
-  'nohrp3vbmef7vxvx',
-];
 
 export function DevicesPage() {
   const [q, setQ] = useState('');
@@ -60,10 +54,12 @@ export function DevicesPage() {
         devicesSynced: number;
         bindingsSynced: number;
         purgedMock?: number;
+        purgedDemoUsers?: number;
       }>('/api/sync/reconcile', { method: 'POST' });
       setSyncMsg(
         `同步完成：设备 ${res.devicesSynced}，绑定 ${res.bindingsSynced}` +
-          (res.purgedMock ? `，已清除 mock ${res.purgedMock}` : ''),
+          (res.purgedMock ? `，已清除 mock 设备 ${res.purgedMock}` : '') +
+          (res.purgedDemoUsers ? `，已清除 demo 用户 ${res.purgedDemoUsers}` : ''),
       );
       void load();
     } catch (e) {
@@ -76,12 +72,14 @@ export function DevicesPage() {
     if (!deviceId?.trim()) return;
     setSyncMsg(null);
     try {
-      const res = await api<{ device: { deviceId: string; productId: string; name: string | null } }>(
-        '/api/sync/reconcile-device',
-        { method: 'POST', body: JSON.stringify({ deviceId: deviceId.trim() }) },
-      );
+      const res = await api<{
+        device: { deviceId: string; productId: string; name: string | null };
+      }>('/api/sync/reconcile-device', {
+        method: 'POST',
+        body: JSON.stringify({ deviceId: deviceId.trim() }),
+      });
       setSyncMsg(
-        `已同步单设备 ${res.device.deviceId}（${res.device.name ?? ''} / ${res.device.productId}）`,
+        `已同步单设备 ${res.device.deviceId}（${res.device.name ?? ''} / ${formatProductLabel(res.device.productId)}）`,
       );
       void load();
     } catch (e) {
@@ -117,9 +115,9 @@ export function DevicesPage() {
           />
           <select value={productId} onChange={(e) => setProductId(e.target.value)}>
             <option value="">全部产品</option>
-            {PRODUCT_IDS.filter(Boolean).map((id) => (
+            {PRODUCT_IDS.map((id) => (
               <option key={id} value={id}>
-                {id}
+                {formatProductLabel(id)}
               </option>
             ))}
           </select>

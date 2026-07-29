@@ -10,6 +10,7 @@ export type DeviceFunction = {
   mode?: string;
   alias?: string;
   groupName?: string;
+  /** Product DP id from local schema (also used as sort key). */
   sortOrder?: number;
 };
 
@@ -36,7 +37,7 @@ function parseValues(raw: unknown): Record<string, unknown> | null {
 
 function enumOptions(values: Record<string, unknown> | null): string[] {
   if (!values) return [];
-  const range = values.range ?? values.list;
+  const range = values.range ?? values.list ?? values.label;
   if (Array.isArray(range)) return range.map(String);
   return [];
 }
@@ -55,7 +56,6 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
       ...Object.keys(statusJson ?? {}),
     ]);
     return [...codes]
-      .sort()
       .map((code) => {
         const fn = byCode.get(code);
         return {
@@ -63,8 +63,12 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
           fn,
           writable: fn ? isWritable(fn) : false,
           value: statusJson?.[code],
+          sortOrder: fn?.sortOrder ?? Number.MAX_SAFE_INTEGER,
         };
-      });
+      })
+      .sort(
+        (a, b) => a.sortOrder - b.sortOrder || a.code.localeCompare(b.code),
+      );
   }, [functions, statusJson]);
 
   const [drafts, setDrafts] = useState<Record<string, unknown>>({});
@@ -115,6 +119,7 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
         <table className="data">
           <thead>
             <tr>
+              <th>id</th>
               <th>code</th>
               <th>名称</th>
               <th>当前值</th>
@@ -129,9 +134,12 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
               const options = enumOptions(parsed);
               const label = fn?.alias ?? fn?.name ?? row.code;
               const panelDisabled = Boolean(disabled) || !row.writable;
+              const dpId =
+                row.sortOrder !== Number.MAX_SAFE_INTEGER ? row.sortOrder : undefined;
 
               return (
                 <tr key={row.code} className="no-click">
+                  <td className="mono">{dpId ?? '—'}</td>
                   <td className="mono">{row.code}</td>
                   <td>
                     {label}

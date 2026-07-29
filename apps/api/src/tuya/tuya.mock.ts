@@ -99,7 +99,12 @@ export class TuyaMockClient implements TuyaClient {
   }
 
   async getDeviceUsers(deviceId: string): Promise<string[]> {
-    return MOCK_DEVICE_USERS[deviceId] ?? [];
+    return (await this.getDeviceUserProfiles(deviceId)).map((p) => p.tuyaUid);
+  }
+
+  async getDeviceUserProfiles(deviceId: string): Promise<TuyaUserProfile[]> {
+    const uids = MOCK_DEVICE_USERS[deviceId] ?? [];
+    return Promise.all(uids.map(async (uid) => (await this.getUserProfile(uid))!));
   }
 
   async getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null> {

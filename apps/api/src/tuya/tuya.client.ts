@@ -47,6 +47,8 @@ export interface TuyaClient {
     pageOrCursor?: number | { lastId?: string; pageSize?: number },
   ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }>;
   getDeviceUsers(deviceId: string): Promise<string[]>;
+  /** Prefer this when syncing — may include nick/mobile from device-user APIs. */
+  getDeviceUserProfiles(deviceId: string): Promise<TuyaUserProfile[]>;
   getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null>;
 }
 
@@ -240,19 +242,40 @@ export class TuyaLiveClient implements TuyaClient {
   }
 
   async getDeviceUsers(deviceId: string): Promise<string[]> {
-    const res = await this.context.request<{ uid_list?: string[] }>({
-      method: 'GET',
-      path: `/v1.0/devices/${deviceId}/users`,
-    });
-    if (!res.success) {
-      this.logger.warn(`getDeviceUsers failed for ${deviceId}`);
-      return [];
+    const profiles = await this.getDeviceUserProfiles(deviceId);
+    return profiles.map((p) => p.tuyaUid);
+  }
+
+  async getDeviceUserProfiles(deviceId: string): Promise<TuyaUserProfile[]> {
+    const paths = [
+      `/v1.0/devices/${deviceId}/users`,
+      `/v1.0/iot-03/devices/${deviceId}/users`,
+      `/v2.0/cloud/thing/${deviceId}/user`,
+    ];
+    for (const path of paths) {
+      try {
+        const res = await this.context.request<Record<string, unknown>>({
+          method: 'GET',
+          path,
+        });
+        if (!res.success || !res.result) continue;
+        const parsed = parseDeviceUserResult(res.result);
+        if (parsed.length > 0) return parsed;
+      } catch (err) {
+        this.logger.debug(`getDeviceUserProfiles ${path} failed for ${deviceId}: ${String(err)}`);
+      }
     }
-    return res.result?.uid_list ?? [];
+    this.logger.warn(`getDeviceUserProfiles empty for ${deviceId}`);
+    return [];
   }
 
   async getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null> {
-    const paths = [`/v1.0/users/${tuyaUid}`, `/v1.0/users/${tuyaUid}/infos`];
+    const paths = [
+      `/v1.0/users/${tuyaUid}`,
+      `/v1.0/users/${tuyaUid}/infos`,
+      `/v1.0/iot-03/users/${tuyaUid}`,
+      `/v2.0/cloud/device/member/${tuyaUid}`,
+    ];
     for (const path of paths) {
       try {
         const res = await this.context.request<Record<string, unknown>>({
@@ -263,19 +286,69 @@ export class TuyaLiveClient implements TuyaClient {
           continue;
         }
         const result = res.result;
-        return {
-          tuyaUid,
-          username: String(
-            result.nick_name ?? result.nickname ?? result.username ?? result.name ?? '',
-          ) || undefined,
-          mobile: String(result.mobile ?? result.phone ?? '') || undefined,
-          email: String(result.email ?? '') || undefined,
-          raw: result,
-        };
+        const profile = pickUserFields(tuyaUid, result);
+        if (profile.username || profile.mobile || profile.email || profile.raw) {
+          return profile;
+        }
       } catch (err) {
         this.logger.debug(`getUserProfile ${path} failed for ${tuyaUid}: ${String(err)}`);
       }
     }
     return null;
   }
+}
+
+function pickUserFields(tuyaUid: string, result: Record<string, unknown>): TuyaUserProfile {
+  return {
+    tuyaUid,
+    username:
+      String(
+        result.nick_name ??
+          result.nickname ??
+          result.user_name ??
+          result.username ??
+          result.name ??
+          '',
+      ) || undefined,
+    mobile: String(result.mobile ?? result.phone ?? result.mobile_name ?? '') || undefined,
+    email: String(result.email ?? '') || undefined,
+    raw: result,
+  };
+}
+
+function parseDeviceUserResult(result: unknown): TuyaUserProfile[] {
+  if (Array.isArray(result)) {
+    return parseDeviceUserResult({ list: result });
+  }
+  if (!result || typeof result !== 'object') return [];
+  const root = result as Record<string, unknown>;
+
+  if (Array.isArray(root.uid_list) && !root.users && !root.list) {
+    return root.uid_list
+      .filter((u): u is string => typeof u === 'string' && !!u)
+      .map((uid) => ({ tuyaUid: uid }));
+  }
+
+  const listCandidates: unknown[] = [];
+  if (Array.isArray(root.users)) listCandidates.push(...root.users);
+  if (Array.isArray(root.list)) listCandidates.push(...root.list);
+
+  const out: TuyaUserProfile[] = [];
+  for (const item of listCandidates) {
+    if (typeof item === 'string' && item) {
+      out.push({ tuyaUid: item });
+      continue;
+    }
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const uid = String(row.uid ?? row.tuyaUid ?? row.user_id ?? row.owner_id ?? '');
+    if (!uid) continue;
+    out.push(pickUserFields(uid, row));
+  }
+  if (out.length === 0 && Array.isArray(root.uid_list)) {
+    return root.uid_list
+      .filter((u): u is string => typeof u === 'string' && !!u)
+      .map((uid) => ({ tuyaUid: uid }));
+  }
+  return out;
 }

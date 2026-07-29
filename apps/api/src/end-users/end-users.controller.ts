@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -15,6 +15,18 @@ export class EndUsersController {
   @Roles('readonly', 'operator', 'admin')
   list(@Query() query: ListEndUsersDto) {
     return this.endUsersService.list(query);
+  }
+
+  @Get(':tuyaUid')
+  @Roles('readonly', 'operator', 'admin')
+  getOne(@Param('tuyaUid') tuyaUid: string) {
+    return this.endUsersService.getByTuyaUid(tuyaUid);
+  }
+
+  @Post(':tuyaUid/refresh-profile')
+  @Roles('operator', 'admin')
+  refreshProfile(@Param('tuyaUid') tuyaUid: string) {
+    return this.endUsersService.refreshProfile(tuyaUid);
   }
 
   @Patch(':tuyaUid/remark')

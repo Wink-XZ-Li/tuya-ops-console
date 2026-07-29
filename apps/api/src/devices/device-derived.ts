@@ -12,24 +12,38 @@ export function asRecord(value: unknown): Record<string, unknown> {
 }
 
 export function extractStatusUpdates(payload: Record<string, unknown>): Record<string, unknown> {
-  const status = payload.status;
-  if (Array.isArray(status)) {
-    return status.reduce<Record<string, unknown>>((acc, item) => {
+  const fromCodeValueArray = (items: unknown): Record<string, unknown> | null => {
+    if (!Array.isArray(items)) return null;
+    const out: Record<string, unknown> = {};
+    for (const item of items) {
       if (item && typeof item === 'object' && 'code' in item) {
         const row = item as { code: string; value?: unknown };
-        acc[row.code] = row.value;
+        if (row.code) out[row.code] = row.value;
       }
-      return acc;
-    }, {});
-  }
+    }
+    return out;
+  };
+
+  const fromStatus = fromCodeValueArray(payload.status);
+  if (fromStatus) return fromStatus;
+
+  // IoT Core property messages: { properties: [{ code, dpId, value, time }, ...] }
+  const fromPropertiesArr = fromCodeValueArray(payload.properties);
+  if (fromPropertiesArr) return fromPropertiesArr;
 
   const properties = payload.properties;
   if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
     return { ...(properties as Record<string, unknown>) };
   }
 
-  const { status: _status, properties: _properties, ...rest } = payload;
-  return rest;
+  // Avoid treating envelope fields (dataId, etc.) as DP codes.
+  const { status: _s, properties: _p, dataId: _d, ...rest } = payload;
+  const nested = asRecord(rest.data);
+  if (Object.keys(nested).length > 0) {
+    const nestedUpdates = extractStatusUpdates(nested);
+    if (Object.keys(nestedUpdates).length > 0) return nestedUpdates;
+  }
+  return {};
 }
 
 export function statusFromPairs(

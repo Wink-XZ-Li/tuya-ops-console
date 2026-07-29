@@ -11,6 +11,7 @@ import {
 } from '../constants/device-event-biz-codes';
 import { getProductDps } from '../constants/product-dp-schemas';
 import { formatFaultInfoDisplay } from '../constants/product-fault-schemas';
+import { formatProductLabel } from '../constants/product-names';
 
 type DeviceDetail = {
   deviceId: string;
@@ -48,6 +49,7 @@ export function DeviceDetailPage() {
   const [dpIds, setDpIds] = useState<string[]>([]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [prettyPayload, setPrettyPayload] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -197,8 +199,8 @@ export function DeviceDetailPage() {
                 <dd className="mono">{device.deviceId}</dd>
                 <dt>名称</dt>
                 <dd>{device.name ?? '—'}</dd>
-                <dt>productId</dt>
-                <dd className="mono">{device.productId}</dd>
+                <dt>产品</dt>
+                <dd>{formatProductLabel(device.productId)}</dd>
                 <dt>网络状态</dt>
                 <dd>{device.onlineStatus}</dd>
                 <dt>信号强度</dt>
@@ -280,6 +282,16 @@ export function DeviceDetailPage() {
             <h2 style={{ marginTop: 0, fontSize: '1.05rem' }}>
               设备日志 <span className="hint">共 {eventsTotal} 条 · 保留 7 天</span>
             </h2>
+            <div className="row gap" style={{ marginBottom: '0.55rem' }}>
+              <label className="muted" style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={prettyPayload}
+                  onChange={(e) => setPrettyPayload(e.target.checked)}
+                />
+                payload JSON 换行
+              </label>
+            </div>
             <form className="filters" onSubmit={onFilterEvents}>
               <MultiSelect
                 label="BizCode"
@@ -336,14 +348,17 @@ export function DeviceDetailPage() {
                     </tr>
                   ) : (
                     events.map((ev) => (
-                      <tr key={ev.id}>
-                        <td>{new Date(ev.eventTime).toLocaleString()}</td>
+                      <tr key={ev.id} className="no-click">
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {new Date(ev.eventTime).toLocaleString()}
+                        </td>
                         <td>{formatBizCodeLabel(ev.bizCode)}</td>
                         <td>
-                          <code className="mono" style={{ fontSize: '0.75rem' }}>
-                            {JSON.stringify(ev.payload).slice(0, 180)}
-                            {JSON.stringify(ev.payload).length > 180 ? '…' : ''}
-                          </code>
+                          <pre
+                            className={`log-payload mono${prettyPayload ? '' : ' log-payload-compact'}`}
+                          >
+                            {JSON.stringify(ev.payload, null, prettyPayload ? 2 : undefined)}
+                          </pre>
                         </td>
                       </tr>
                     ))

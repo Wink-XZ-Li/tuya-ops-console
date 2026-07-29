@@ -3,6 +3,7 @@ import {
   collectFaultEntries,
   deriveFaultFields,
   deriveSignalStrength,
+  extractStatusUpdates,
   formatLocationText,
   statusFromPairs,
 } from './device-derived';
@@ -26,6 +27,23 @@ describe('device-derived', () => {
     // AC: [E1, E2, E3, E4] — value 2 = bit1 → E2
     const ac = deriveFaultFields({ fault: 2 }, [], 'uhmj5b0ba31zpme6');
     expect(ac.faultInfo).toBe('fault=2｜E2');
+  });
+
+  it('parses IoT Core properties array into status updates', () => {
+    const updates = extractStatusUpdates({
+      dataId: '000657B6A42A34C79B47204F6A050002',
+      properties: [
+        { code: 'hw_version', dpId: 198, time: 1, value: 1 },
+        { code: 'heating', dpId: 101, time: 1, value: true },
+        { code: 'temp_set', dpId: 9, time: 1, value: 33 },
+      ],
+    });
+    expect(updates).toEqual({
+      hw_version: 1,
+      heating: true,
+      temp_set: 33,
+    });
+    expect(updates.dataId).toBeUndefined();
   });
 
   it('derives normal when status present without fault', () => {

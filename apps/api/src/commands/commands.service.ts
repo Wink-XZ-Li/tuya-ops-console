@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { getProductDps } from '../devices/product-dp-schemas';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   isAllowedProduct,
@@ -24,6 +25,13 @@ export interface ListCommandsParams {
   pageSize?: number;
 }
 
+function mapSchemaType(type: string): string {
+  const t = type.toLowerCase();
+  if (t === 'bool' || t === 'boolean') return 'boolean';
+  if (t === 'value') return 'integer';
+  return t;
+}
+
 @Injectable()
 export class CommandsService {
   private readonly allowedProducts = parseProductIds();
@@ -35,22 +43,64 @@ export class CommandsService {
 
   async getFunctions(deviceId: string) {
     const device = await this.requireDevice(deviceId);
-    const [functions, aliases] = await Promise.all([
-      this.tuya.getStandardFunctions(deviceId),
+    const [standard, aliases] = await Promise.all([
+      this.tuya.getStandardFunctions(deviceId).catch(() => []),
       this.prisma.dpAlias.findMany({
         where: { productId: device.productId },
       }),
     ]);
     const aliasByCode = new Map(aliases.map((a) => [a.code, a]));
-    return functions.map((fn) => {
-      const alias = aliasByCode.get(fn.code);
-      return {
-        ...fn,
-        alias: alias?.alias,
-        groupName: alias?.groupName,
-        sortOrder: alias?.sortOrder,
-      };
-    });
+    const byCode = new Map<
+      string,
+      {
+        code: string;
+        name?: string;
+        type?: string;
+        values?: unknown;
+        mode?: string;
+        alias?: string;
+        groupName?: string;
+        sortOrder?: number;
+      }
+    >();
+
+    for (const dp of getProductDps(device.productId)) {
+      byCode.set(dp.code, {
+        code: dp.code,
+        name: dp.name,
+        type: mapSchemaType(dp.type),
+        values: dp.values ?? undefined,
+        mode: dp.mode,
+        sortOrder: dp.id,
+      });
+    }
+
+    for (const fn of standard) {
+      const existing = byCode.get(fn.code);
+      byCode.set(fn.code, {
+        code: fn.code,
+        name: fn.name ?? existing?.name,
+        type: fn.type ?? existing?.type,
+        values: fn.values ?? existing?.values,
+        mode: fn.mode ?? existing?.mode ?? 'rw',
+        sortOrder: existing?.sortOrder,
+      });
+    }
+
+    return [...byCode.values()]
+      .map((fn) => {
+        const alias = aliasByCode.get(fn.code);
+        return {
+          ...fn,
+          alias: alias?.alias,
+          groupName: alias?.groupName ?? fn.groupName,
+          sortOrder: alias?.sortOrder ?? fn.sortOrder,
+        };
+      })
+      .sort(
+        (a, b) =>
+          (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999) || a.code.localeCompare(b.code),
+      );
   }
 
   async send(deviceId: string, adminUserId: string, dto: SendCommandDto) {
