@@ -15,6 +15,19 @@ describe('device-derived', () => {
     expect(out.faultInfo).toContain('fault=1');
   });
 
+  it('maps bitmap fault labels from product schema', () => {
+    // nohrp3vbmef7vxvx: labels [E1, E3, E4, E2] — value 2 = bit1 → E3
+    const water = deriveFaultFields({ fault: 2 }, [], 'nohrp3vbmef7vxvx');
+    expect(water.faultInfo).toBe('fault=2｜E3');
+
+    const e1 = deriveFaultFields({ fault: 1 }, [], 'nohrp3vbmef7vxvx');
+    expect(e1.faultInfo).toBe('fault=1｜E1');
+
+    // AC: [E1, E2, E3, E4] — value 2 = bit1 → E2
+    const ac = deriveFaultFields({ fault: 2 }, [], 'uhmj5b0ba31zpme6');
+    expect(ac.faultInfo).toBe('fault=2｜E2');
+  });
+
   it('derives normal when status present without fault', () => {
     const out = deriveFaultFields({ switch: true });
     expect(out.faultStatus).toBe(DeviceFaultStatus.normal);

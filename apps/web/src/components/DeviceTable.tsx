@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { formatFaultInfoDisplay } from '../constants/product-fault-schemas';
 
 export type DeviceRow = {
   deviceId: string;
@@ -68,7 +69,7 @@ export function DeviceTable({ items }: Props) {
               </td>
               <td>{d.signalStrength ?? '—'}</td>
               <td>{faultLabel(d.faultStatus)}</td>
-              <td>{d.faultInfo ?? '—'}</td>
+              <td className="mono">{formatFaultInfoDisplay(d.productId, d.faultInfo)}</td>
               <td>{d.locationText ?? '—'}</td>
               <td>{d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString() : '—'}</td>
             </tr>

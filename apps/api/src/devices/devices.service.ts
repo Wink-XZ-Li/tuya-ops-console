@@ -114,6 +114,7 @@ export class DevicesService {
     const fault = deriveFaultFields(
       status,
       alerts.map((a) => a.title),
+      device.productId,
     );
 
     await this.prisma.device.update({

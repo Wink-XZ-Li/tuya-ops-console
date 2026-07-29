@@ -10,6 +10,8 @@ import {
   formatBizCodeLabel,
 } from '../constants/device-event-biz-codes';
 import { getProductDps } from '../constants/product-dp-schemas';
+import { formatFaultInfoDisplay } from '../constants/product-fault-schemas';
+
 type DeviceDetail = {
   deviceId: string;
   productId: string;
@@ -210,7 +212,11 @@ export function DeviceDetailPage() {
                       : '未知'}
                 </dd>
                 <dt>故障信息</dt>
-                <dd>{device.faultInfo ?? '—'}</dd>
+                <dd className="mono">
+                  {device.faultInfo
+                    ? formatFaultInfoDisplay(device.productId, device.faultInfo)
+                    : '—'}
+                </dd>
                 <dt>所在城市</dt>
                 <dd>{device.locationText ?? '—'}</dd>
                 <dt>未关闭告警</dt>

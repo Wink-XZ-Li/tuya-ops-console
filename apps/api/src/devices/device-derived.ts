@@ -1,4 +1,5 @@
 import { DeviceFaultStatus } from '@prisma/client';
+import { getFaultBitmapLabels } from './product-fault-schemas';
 
 export const FAULT_CODE_PATTERN = /fault|alarm|error|warn|malfunction/i;
 export const SIGNAL_CODE_PATTERN = /rssi|signal_strength|wifi_signal|wifi_rssi|signal/i;
@@ -61,9 +62,42 @@ export function collectFaultEntries(
     .map(([code, value]) => ({ code, value }));
 }
 
+/** Decode Tuya bitmap value → active label names (bit i → labels[i]). */
+export function decodeBitmapLabels(value: unknown, labels: string[]): string[] {
+  let n: number | null = null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    n = value >>> 0;
+  } else if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    n = Number(value.trim()) >>> 0;
+  } else if (typeof value === 'boolean') {
+    return value && labels[0] ? [labels[0]] : [];
+  }
+  if (n == null || n === 0) return [];
+
+  const names: string[] = [];
+  for (let i = 0; i < labels.length; i++) {
+    if (n & (1 << i)) names.push(labels[i]);
+  }
+  return names;
+}
+
+export function formatFaultEntry(
+  code: string,
+  value: unknown,
+  productId?: string | null,
+): string {
+  const raw = `${code}=${String(value)}`;
+  const labels = getFaultBitmapLabels(productId, code);
+  if (!labels) return raw;
+  const names = decodeBitmapLabels(value, labels);
+  if (names.length === 0) return raw;
+  return `${raw}｜${names.join('+')}`;
+}
+
 export function deriveFaultFields(
   status: Record<string, unknown>,
   openAlertTitles: string[] = [],
+  productId?: string | null,
 ): { faultStatus: DeviceFaultStatus; faultInfo: string | null } {
   const faults = collectFaultEntries(status);
   if (faults.length > 0) {
@@ -71,7 +105,7 @@ export function deriveFaultFields(
       faultStatus: DeviceFaultStatus.fault,
       faultInfo: faults
         .slice(0, 5)
-        .map((f) => `${f.code}=${String(f.value)}`)
+        .map((f) => formatFaultEntry(f.code, f.value, productId))
         .join('; ')
         .slice(0, 512),
     };

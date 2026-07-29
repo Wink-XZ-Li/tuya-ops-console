@@ -88,7 +88,7 @@ export class SyncService {
 
           const device = await this.upsertDevice(summary, syncedAt);
           devicesSynced += 1;
-          await this.refreshDeviceStatusDerived(device.id, summary.deviceId);
+          await this.refreshDeviceStatusDerived(device.id, summary.deviceId, summary.productId);
           const users = await this.tuya.getDeviceUsers(summary.deviceId);
           bindingsSynced += await this.replaceBindings(device.id, users, syncedAt);
         }
@@ -118,7 +118,7 @@ export class SyncService {
     }
     const summary = await this.tuya.getDevice(deviceId);
     const device = await this.upsertDevice(summary, new Date());
-    await this.refreshDeviceStatusDerived(device.id, deviceId);
+    await this.refreshDeviceStatusDerived(device.id, deviceId, summary.productId);
     const users = await this.tuya.getDeviceUsers(deviceId);
     const bindingsSynced = await this.replaceBindings(device.id, users, new Date());
     await this.prisma.auditLog.create({
@@ -167,7 +167,11 @@ export class SyncService {
     });
   }
 
-  private async refreshDeviceStatusDerived(internalId: string, tuyaDeviceId: string) {
+  private async refreshDeviceStatusDerived(
+    internalId: string,
+    tuyaDeviceId: string,
+    productId: string,
+  ) {
     try {
       const pairs = await this.tuya.getDeviceStatus(tuyaDeviceId);
       const status = statusFromPairs(pairs);
@@ -179,6 +183,7 @@ export class SyncService {
       const fault = deriveFaultFields(
         status,
         alerts.map((a) => a.title),
+        productId,
       );
       await this.prisma.device.update({
         where: { id: internalId },

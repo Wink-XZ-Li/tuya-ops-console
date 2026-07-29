@@ -140,7 +140,7 @@ export class EventHandlerService {
 
     const current = await this.prisma.device.findUnique({
       where: { id: deviceId },
-      select: { statusJson: true },
+      select: { statusJson: true, productId: true },
     });
     const merged = {
       ...asRecord(current?.statusJson),
@@ -155,6 +155,7 @@ export class EventHandlerService {
     const fault = deriveFaultFields(
       merged,
       openAlerts.map((a) => a.title),
+      current?.productId,
     );
 
     await this.prisma.device.update({
