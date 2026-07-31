@@ -79,6 +79,35 @@ export interface ListAppUsersPage {
   total?: number;
 }
 
+/** App device activation / active series (数据星象仪). */
+export interface TuyaDeviceStatPoint {
+  dt: string;
+  activationNum: number;
+  activationTotalNum: number;
+  activeNum: number;
+}
+
+export interface TuyaRegisterStatPoint {
+  dt: string;
+  todayRegisterNum: number;
+  totalRegisterNum: number;
+}
+
+export interface TuyaControlStatPoint {
+  dt: string;
+  controlNum: number;
+  controlUserNum: number;
+}
+
+export type TuyaLocationDateType = 'day' | 'week' | 'weeks' | 'month';
+export type TuyaLocationRegionType = 'country' | 'province' | 'city';
+
+export interface TuyaLocationActivePoint {
+  name: string;
+  value: number;
+  percentage: string;
+}
+
 export interface TuyaClient {
   getDevice(deviceId: string): Promise<TuyaDeviceDetail>;
   getDeviceStatus(deviceId: string): Promise<Array<{ code: string; value: unknown }>>;
@@ -108,6 +137,30 @@ export interface TuyaClient {
     tuyaUid: string,
     opts?: { from?: 'home' | 'sharing' },
   ): Promise<TuyaUserDevice[]>;
+  /** GET /v1.0/iot-datacenter/app/device/stat */
+  getAppDeviceStat(params: {
+    startDay: string;
+    endDay: string;
+    productId?: string;
+  }): Promise<TuyaDeviceStatPoint[]>;
+  /** GET /v1.0/iot-datacenter/app/device/control */
+  getAppDeviceControl(params: {
+    startDay: string;
+    endDay: string;
+    productId?: string;
+  }): Promise<TuyaControlStatPoint[]>;
+  /** GET /v1.0/iot-datacenter/app/user/register/stat */
+  getAppUserRegisterStat(params: {
+    startDay: string;
+    endDay: string;
+  }): Promise<TuyaRegisterStatPoint[]>;
+  /** GET /v1.1/devices/locations-active-datas */
+  getLocationsActiveDatas(params: {
+    dateType: TuyaLocationDateType;
+    type?: TuyaLocationRegionType;
+    limit?: number;
+    productId?: string;
+  }): Promise<TuyaLocationActivePoint[]>;
 }
 
 export function isAllowedProduct(productId: string, allowed: Set<string>): boolean {
@@ -118,6 +171,7 @@ export const DEFAULT_PRODUCT_IDS = [
   'uhmj5b0ba31zpme6',
   'qxjzruuqz40bty7e',
   'nohrp3vbmef7vxvx',
+  '7sylzgrdnnq2w5mo',
 ];
 
 export function parseProductIds(raw = process.env.TUYA_PRODUCT_IDS ?? ''): Set<string> {
@@ -186,7 +240,9 @@ export class TuyaLiveClient implements TuyaClient {
       path: `/v1.0/devices/${deviceId}/status`,
     });
     if (!res.success) {
-      throw new Error(`Tuya getDeviceStatus failed for ${deviceId}`);
+      const code = (res as { code?: number }).code;
+      const msg = (res as { msg?: string }).msg ?? 'unknown';
+      throw new Error(`Tuya getDeviceStatus failed for ${deviceId}: [${code}] ${msg}`);
     }
     return res.result ?? [];
   }
@@ -197,7 +253,9 @@ export class TuyaLiveClient implements TuyaClient {
       path: `/v1.0/devices/${deviceId}/functions`,
     });
     if (!res.success) {
-      throw new Error(`Tuya getStandardFunctions failed for ${deviceId}`);
+      const code = (res as { code?: number }).code;
+      const msg = (res as { msg?: string }).msg ?? 'unknown';
+      throw new Error(`Tuya getStandardFunctions failed for ${deviceId}: [${code}] ${msg}`);
     }
     return res.result?.functions ?? [];
   }
@@ -212,7 +270,9 @@ export class TuyaLiveClient implements TuyaClient {
       body: { commands },
     });
     if (!res.success) {
-      throw new Error(`Tuya sendStandardCommand failed for ${deviceId}`);
+      const code = (res as { code?: number }).code;
+      const msg = (res as { msg?: string }).msg ?? 'unknown';
+      throw new Error(`Tuya sendStandardCommand failed for ${deviceId}: [${code}] ${msg}`);
     }
     return res.result;
   }
@@ -510,6 +570,123 @@ export class TuyaLiveClient implements TuyaClient {
 
     return out;
   }
+
+  async getAppDeviceStat(params: {
+    startDay: string;
+    endDay: string;
+    productId?: string;
+  }): Promise<TuyaDeviceStatPoint[]> {
+    const body: Record<string, string> = {
+      startDay: params.startDay,
+      endDay: params.endDay,
+    };
+    if (params.productId) body.productId = params.productId;
+    const res = await this.context.request<Array<Record<string, unknown>>>({
+      method: 'GET',
+      path: '/v1.0/iot-datacenter/app/device/stat',
+      query: { params: JSON.stringify(body) },
+    });
+    if (!res.success) {
+      throw new Error(
+        `Tuya getAppDeviceStat failed: [${(res as { code?: number }).code}] ${(res as { msg?: string }).msg}`,
+      );
+    }
+    return (res.result ?? []).map((row) => ({
+      dt: normalizeDay(row.dt),
+      activationNum: Number(row.activationNum ?? 0),
+      activationTotalNum: Number(row.activationTotalNum ?? 0),
+      activeNum: Number(row.activeNum ?? 0),
+    }));
+  }
+
+  async getAppDeviceControl(params: {
+    startDay: string;
+    endDay: string;
+    productId?: string;
+  }): Promise<TuyaControlStatPoint[]> {
+    const body: Record<string, string> = {
+      startDay: params.startDay,
+      endDay: params.endDay,
+    };
+    if (params.productId) body.productId = params.productId;
+    const res = await this.context.request<Array<Record<string, unknown>>>({
+      method: 'GET',
+      path: '/v1.0/iot-datacenter/app/device/control',
+      query: { params: JSON.stringify(body) },
+    });
+    if (!res.success) {
+      throw new Error(
+        `Tuya getAppDeviceControl failed: [${(res as { code?: number }).code}] ${(res as { msg?: string }).msg}`,
+      );
+    }
+    return (res.result ?? []).map((row) => ({
+      dt: normalizeDay(row.dt),
+      controlNum: Number(row.controlNum ?? row.control_num ?? 0),
+      controlUserNum: Number(row.controlUserNum ?? row.control_user_num ?? 0),
+    }));
+  }
+
+  async getAppUserRegisterStat(params: {
+    startDay: string;
+    endDay: string;
+  }): Promise<TuyaRegisterStatPoint[]> {
+    const res = await this.context.request<Array<Record<string, unknown>>>({
+      method: 'GET',
+      path: '/v1.0/iot-datacenter/app/user/register/stat',
+      query: {
+        params: JSON.stringify({
+          startDay: params.startDay,
+          endDay: params.endDay,
+        }),
+      },
+    });
+    if (!res.success) {
+      throw new Error(
+        `Tuya getAppUserRegisterStat failed: [${(res as { code?: number }).code}] ${(res as { msg?: string }).msg}`,
+      );
+    }
+    return (res.result ?? []).map((row) => ({
+      dt: normalizeDay(row.dt),
+      todayRegisterNum: Number(row.todayRegisterNum ?? 0),
+      totalRegisterNum: Number(row.totalRegisterNum ?? 0),
+    }));
+  }
+
+  async getLocationsActiveDatas(params: {
+    dateType: TuyaLocationDateType;
+    type?: TuyaLocationRegionType;
+    limit?: number;
+    productId?: string;
+  }): Promise<TuyaLocationActivePoint[]> {
+    const query: Record<string, string | number> = {
+      date_type: params.dateType,
+      type: params.type ?? 'province',
+      limit: params.limit ?? 20,
+    };
+    if (params.productId) query.productId = params.productId;
+
+    const res = await this.context.request<Array<Record<string, unknown>>>({
+      method: 'GET',
+      path: '/v1.1/devices/locations-active-datas',
+      query,
+    });
+    if (!res.success) {
+      throw new Error(
+        `Tuya getLocationsActiveDatas failed: [${(res as { code?: number }).code}] ${(res as { msg?: string }).msg}`,
+      );
+    }
+    return (res.result ?? []).map((row) => ({
+      name: String(row.name ?? ''),
+      value: Number(row.value ?? 0),
+      percentage: String(row.percentage ?? ''),
+    }));
+  }
+}
+
+function normalizeDay(value: unknown): string {
+  if (value == null) return '';
+  const s = String(value).replace(/-/g, '');
+  return s.length >= 8 ? s.slice(0, 8) : s;
 }
 
 function epochToDate(value: unknown): Date | undefined {

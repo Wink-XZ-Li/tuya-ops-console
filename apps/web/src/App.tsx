@@ -5,6 +5,7 @@ import { AppLayout } from './components/AppLayout';
 import { RoleGate } from './components/RoleGate';
 import { AlertsPage } from './pages/AlertsPage';
 import { CommandHistoryPage } from './pages/CommandHistoryPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { DeviceDetailPage } from './pages/DeviceDetailPage';
 import { DevicesPage } from './pages/DevicesPage';
 import { LoginPage } from './pages/LoginPage';
@@ -31,7 +32,7 @@ export default function App() {
     <Routes>
       <Route
         path="/login"
-        element={isLoggedIn() ? <Navigate to="/devices" replace /> : <LoginPage />}
+        element={isLoggedIn() ? <Navigate to="/" replace /> : <LoginPage />}
       />
       <Route
         path="/"
@@ -41,7 +42,8 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<Navigate to="/devices" replace />} />
+        <Route index element={<DashboardPage />} />
+        <Route path="dashboard" element={<Navigate to="/" replace />} />
         <Route path="devices" element={<DevicesPage />} />
         <Route path="devices/:deviceId" element={<DeviceDetailPage />} />
         <Route path="users" element={<UsersPage />} />
@@ -59,7 +61,7 @@ export default function App() {
       </Route>
       <Route
         path="*"
-        element={<Navigate to={isLoggedIn() ? '/devices' : '/login'} replace />}
+        element={<Navigate to={isLoggedIn() ? '/' : '/login'} replace />}
       />
     </Routes>
   );

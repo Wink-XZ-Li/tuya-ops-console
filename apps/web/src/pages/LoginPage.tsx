@@ -26,7 +26,7 @@ export function LoginPage() {
         body: JSON.stringify({ username, password }),
       });
       setSession(res.accessToken, res.role, res.username);
-      navigate('/devices', { replace: true });
+      navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败');
     } finally {

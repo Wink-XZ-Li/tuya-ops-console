@@ -4,6 +4,17 @@ import { RoleGate } from './RoleGate';
 
 const DEMO_MODE = (import.meta.env.VITE_DEMO_MODE ?? 'mock').toLowerCase();
 
+function IconDashboard() {
+  return (
+    <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1" />
+      <rect x="13.5" y="3.5" width="7" height="4.5" rx="1" />
+      <rect x="13.5" y="10.5" width="7" height="10" rx="1" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1" />
+    </svg>
+  );
+}
+
 function IconDevices() {
   return (
     <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden>
@@ -70,6 +81,10 @@ export function AppLayout() {
           涂鸦运维台
         </div>
         <nav className="nav">
+          <NavLink className={({ isActive }) => (isActive ? 'active' : undefined)} to="/" end>
+            <IconDashboard />
+            看板
+          </NavLink>
           <NavLink className={({ isActive }) => (isActive ? 'active' : undefined)} to="/devices">
             <IconDevices />
             设备

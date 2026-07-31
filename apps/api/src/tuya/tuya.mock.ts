@@ -5,8 +5,14 @@ import {
   ListAppUsersPage,
   StandardFunction,
   TuyaClient,
+  TuyaControlStatPoint,
   TuyaDeviceDetail,
+  TuyaDeviceStatPoint,
   TuyaDeviceSummary,
+  TuyaLocationActivePoint,
+  TuyaLocationDateType,
+  TuyaLocationRegionType,
+  TuyaRegisterStatPoint,
   TuyaUserDevice,
   TuyaUserHome,
   TuyaUserProfile,
@@ -215,4 +221,87 @@ export class TuyaMockClient implements TuyaClient {
     }
     return out;
   }
+
+  async getAppDeviceStat(params: {
+    startDay: string;
+    endDay: string;
+    productId?: string;
+  }): Promise<TuyaDeviceStatPoint[]> {
+    void params.productId;
+    return mockDaySeries(params.startDay, params.endDay).map((dt, i) => ({
+      dt,
+      activationNum: 2 + (i % 4),
+      activationTotalNum: 1000 + i * 3,
+      activeNum: 40 + (i % 10),
+    }));
+  }
+
+  async getAppDeviceControl(params: {
+    startDay: string;
+    endDay: string;
+    productId?: string;
+  }): Promise<TuyaControlStatPoint[]> {
+    void params.productId;
+    return mockDaySeries(params.startDay, params.endDay).map((dt, i) => ({
+      dt,
+      controlNum: 80 + i * 3,
+      controlUserNum: 20 + (i % 8),
+    }));
+  }
+
+  async getAppUserRegisterStat(params: {
+    startDay: string;
+    endDay: string;
+  }): Promise<TuyaRegisterStatPoint[]> {
+    return mockDaySeries(params.startDay, params.endDay).map((dt, i) => ({
+      dt,
+      todayRegisterNum: 1 + (i % 5),
+      totalRegisterNum: 700 + i,
+    }));
+  }
+
+  async getLocationsActiveDatas(params: {
+    dateType: TuyaLocationDateType;
+    type?: TuyaLocationRegionType;
+    limit?: number;
+    productId?: string;
+  }): Promise<TuyaLocationActivePoint[]> {
+    void params.dateType;
+    void params.type;
+    void params.productId;
+    const all: TuyaLocationActivePoint[] = [
+      { name: '广东', value: 340, percentage: '33.14%' },
+      { name: '河南', value: 175, percentage: '17.06%' },
+      { name: '北京', value: 85, percentage: '8.28%' },
+      { name: '江苏', value: 42, percentage: '4.10%' },
+      { name: '其他', value: 384, percentage: '37.42%' },
+    ];
+    return all.slice(0, params.limit ?? 20);
+  }
+}
+
+function mockDaySeries(startDay: string, endDay: string): string[] {
+  const start = parseYmd(startDay);
+  const end = parseYmd(endDay);
+  const out: string[] = [];
+  for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
+    out.push(formatYmd(new Date(t)));
+  }
+  return out.length ? out : [startDay];
+}
+
+function parseYmd(ymd: string): Date {
+  const s = ymd.replace(/-/g, '');
+  return new Date(
+    Number(s.slice(0, 4)),
+    Number(s.slice(4, 6)) - 1,
+    Number(s.slice(6, 8)),
+  );
+}
+
+function formatYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}${m}${day}`;
 }

@@ -14,6 +14,7 @@ const PRODUCT_IDS = [
   'uhmj5b0ba31zpme6',
   'qxjzruuqz40bty7e',
   'nohrp3vbmef7vxvx',
+  '7sylzgrdnnq2w5mo',
 ];
 
 export function SettingsAliasesPage() {

@@ -9,6 +9,7 @@ const DEFAULT_PRODUCT_IDS = [
   'uhmj5b0ba31zpme6',
   'qxjzruuqz40bty7e',
   'nohrp3vbmef7vxvx',
+  '7sylzgrdnnq2w5mo',
 ];
 
 function parseAllowedProducts(raw = process.env.TUYA_PRODUCT_IDS ?? ''): Set<string> {
