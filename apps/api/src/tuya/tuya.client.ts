@@ -69,6 +69,8 @@ export interface StandardFunction {
   values?: unknown;
   /** rw | wr | ro — when missing, treat as writable (standard instruction set). */
   mode?: string;
+  /** DP id from the thing model (abilityId). */
+  dpId?: number;
 }
 
 export const TUYA_CLIENT = Symbol('TUYA_CLIENT');
@@ -108,14 +110,40 @@ export interface TuyaLocationActivePoint {
   percentage: string;
 }
 
+/** GET /v1.0/devices/datas-survey — device fault / active overview. */
+export interface TuyaDevicesDatasSurvey {
+  deviceTotal: number;
+  deviceOnline: number;
+  deviceOffline: number;
+  deviceActive: number;
+  deviceFault: number;
+  raw?: Record<string, unknown>;
+}
+
+/** GET /v1.0/devices/live-datas-survey — near-real-time device survey. */
+export interface TuyaDevicesLiveDatasSurvey {
+  deviceOnline: number;
+  deviceOffline: number;
+  deviceActive: number;
+  deviceFault: number;
+  raw?: Record<string, unknown>;
+}
+
 export interface TuyaClient {
   getDevice(deviceId: string): Promise<TuyaDeviceDetail>;
   getDeviceStatus(deviceId: string): Promise<Array<{ code: string; value: unknown }>>;
   getStandardFunctions(deviceId: string): Promise<StandardFunction[]>;
+  /** Full thing-model properties, including read-only DPs such as fault. */
+  getThingProperties(deviceId: string): Promise<StandardFunction[]>;
   sendStandardCommand(
     deviceId: string,
     commands: Array<{ code: string; value: unknown }>,
   ): Promise<unknown>;
+  /** Cloud project devices, all products. */
+  listDevices(pageOrCursor?: {
+    lastId?: string;
+    pageSize?: number;
+  }): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }>;
   listDevicesByProduct(
     productId: string,
     pageOrCursor?: number | { lastId?: string; pageSize?: number },
@@ -161,10 +189,68 @@ export interface TuyaClient {
     limit?: number;
     productId?: string;
   }): Promise<TuyaLocationActivePoint[]>;
+  /** GET /v1.0/devices/datas-survey */
+  getDevicesDatasSurvey(params?: {
+    productId?: string;
+  }): Promise<TuyaDevicesDatasSurvey>;
+  /** Alias of getDevicesDatasSurvey */
+  getDevicesSurvey(params?: {
+    productId?: string;
+  }): Promise<TuyaDevicesDatasSurvey>;
+  /** GET /v1.0/devices/live-datas-survey */
+  getDevicesLiveDatasSurvey(params?: {
+    productId?: string;
+  }): Promise<TuyaDevicesLiveDatasSurvey>;
+  /** GET /v1.0/iot-03/geocode-cities/latitude-longitude */
+  reverseGeocode(params: {
+    latitude: string;
+    longitude: string;
+  }): Promise<TuyaGeocodeResult>;
+  /** GET /v1.0/iot-03/devices/{device_id}/report-logs */
+  getDeviceReportLogs(params: {
+    deviceId: string;
+    codes: string;
+    startTime: number;
+    endTime: number;
+    size?: number;
+    lastRowKey?: string;
+  }): Promise<TuyaDeviceReportLogsPage>;
+  /** GET /v1.0/iot-03/devices/{device_id}/upgrade-infos */
+  getDeviceUpgradeInfos(deviceId: string): Promise<TuyaFirmwareUpgradeInfo[]>;
 }
 
-export function isAllowedProduct(productId: string, allowed: Set<string>): boolean {
-  return allowed.has(productId);
+export interface TuyaGeocodeResult {
+  longitude: string;
+  latitude: string;
+  address: string;
+}
+
+export interface TuyaDeviceReportLog {
+  code: string;
+  value: unknown;
+  eventTime: number;
+}
+
+export interface TuyaDeviceReportLogsPage {
+  deviceId: string;
+  hasMore: boolean;
+  total?: number;
+  lastRowKey?: string;
+  list: TuyaDeviceReportLog[];
+}
+
+export interface TuyaFirmwareUpgradeInfo {
+  type?: string;
+  currentVersion?: string;
+  version?: string;
+  upgradeStatus?: number | string;
+  desc?: string;
+  raw?: Record<string, unknown>;
+}
+
+/** Product allowlist is disabled: any non-empty product id can be synced. */
+export function isAllowedProduct(productId: string, _allowed?: Set<string>): boolean {
+  return productId.trim().length > 0;
 }
 
 export const DEFAULT_PRODUCT_IDS = [
@@ -172,6 +258,9 @@ export const DEFAULT_PRODUCT_IDS = [
   'qxjzruuqz40bty7e',
   'nohrp3vbmef7vxvx',
   '7sylzgrdnnq2w5mo',
+  'wquesyz0b2h8mxsu', // 斯德哥尔摩-400G
+  'ckjfqtnqqystvfaa', // 国内伊莱克斯燃气壁挂炉T16-VT1系列
+  '90wi2aimyqstn9qc', // 国内西屋燃气壁挂炉T6-WX2系列
 ];
 
 export function parseProductIds(raw = process.env.TUYA_PRODUCT_IDS ?? ''): Set<string> {
@@ -185,14 +274,9 @@ export function parseProductIds(raw = process.env.TUYA_PRODUCT_IDS ?? ''): Set<s
 @Injectable()
 export class TuyaLiveClient implements TuyaClient {
   private readonly logger = new Logger(TuyaLiveClient.name);
-  private readonly allowedProducts: Set<string>;
   private readonly context: TuyaContext;
 
-  constructor(
-    context?: TuyaContext,
-    allowedProducts: Set<string> = parseProductIds(),
-  ) {
-    this.allowedProducts = allowedProducts;
+  constructor(context?: TuyaContext) {
     this.context =
       context ??
       new TuyaContext({
@@ -219,9 +303,6 @@ export class TuyaLiveClient implements TuyaClient {
     }
     const result = res.result ?? {};
     const productId = String(result.product_id ?? result.productId ?? '');
-    if (!isAllowedProduct(productId, this.allowedProducts)) {
-      throw new Error(`Product ${productId} is not allowed`);
-    }
     return {
       deviceId: String(result.id ?? deviceId),
       productId,
@@ -235,6 +316,28 @@ export class TuyaLiveClient implements TuyaClient {
   }
 
   async getDeviceStatus(deviceId: string): Promise<Array<{ code: string; value: unknown }>> {
+    const [reported, shadow] = await Promise.all([
+      this.fetchReportedStatus(deviceId),
+      this.fetchShadowStatus(deviceId),
+    ]);
+    if (!reported.ok && shadow.length === 0) {
+      throw new Error(reported.error ?? `Tuya getDeviceStatus failed for ${deviceId}`);
+    }
+    const byCode = new Map<string, { code: string; value: unknown }>();
+    for (const item of shadow) {
+      if (item.code) byCode.set(item.code, item);
+    }
+    for (const item of reported.pairs) {
+      if (item.code) byCode.set(item.code, item);
+    }
+    return [...byCode.values()];
+  }
+
+  private async fetchReportedStatus(deviceId: string): Promise<{
+    ok: boolean;
+    error?: string;
+    pairs: Array<{ code: string; value: unknown }>;
+  }> {
     const res = await this.context.request<Array<{ code: string; value: unknown }>>({
       method: 'GET',
       path: `/v1.0/devices/${deviceId}/status`,
@@ -242,9 +345,33 @@ export class TuyaLiveClient implements TuyaClient {
     if (!res.success) {
       const code = (res as { code?: number }).code;
       const msg = (res as { msg?: string }).msg ?? 'unknown';
-      throw new Error(`Tuya getDeviceStatus failed for ${deviceId}: [${code}] ${msg}`);
+      return {
+        ok: false,
+        error: `Tuya getDeviceStatus failed for ${deviceId}: [${code}] ${msg}`,
+        pairs: [],
+      };
     }
-    return res.result ?? [];
+    return { ok: true, pairs: res.result ?? [] };
+  }
+
+  private async fetchShadowStatus(
+    deviceId: string,
+  ): Promise<Array<{ code: string; value: unknown }>> {
+    try {
+      const res = await this.context.request<{ properties?: Array<Record<string, unknown>> }>({
+        method: 'GET',
+        path: `/v2.0/cloud/thing/${deviceId}/shadow/properties`,
+      });
+      if (!res.success) return [];
+      return (res.result?.properties ?? [])
+        .map((item) => ({
+          code: String(item.code ?? ''),
+          value: item.value,
+        }))
+        .filter((item) => item.code);
+    } catch {
+      return [];
+    }
   }
 
   async getStandardFunctions(deviceId: string): Promise<StandardFunction[]> {
@@ -258,6 +385,19 @@ export class TuyaLiveClient implements TuyaClient {
       throw new Error(`Tuya getStandardFunctions failed for ${deviceId}: [${code}] ${msg}`);
     }
     return res.result?.functions ?? [];
+  }
+
+  async getThingProperties(deviceId: string): Promise<StandardFunction[]> {
+    try {
+      const res = await this.context.request<{ model?: string }>({
+        method: 'GET',
+        path: `/v2.0/cloud/thing/${deviceId}/model`,
+      });
+      if (!res.success || !res.result?.model) return [];
+      return propertiesFromThingModel(res.result.model);
+    } catch {
+      return [];
+    }
   }
 
   async sendStandardCommand(
@@ -277,30 +417,40 @@ export class TuyaLiveClient implements TuyaClient {
     return res.result;
   }
 
+  async listDevices(
+    pageOrCursor: { lastId?: string; pageSize?: number } = {},
+  ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }> {
+    return this.queryCloudDevices(pageOrCursor);
+  }
+
   async listDevicesByProduct(
     productId: string,
     pageOrCursor: number | { lastId?: string; pageSize?: number } = 1,
   ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }> {
-    if (!isAllowedProduct(productId, this.allowedProducts)) {
-      return { list: [], total: 0 };
+    if (typeof pageOrCursor === 'number') {
+      return this.queryCloudDevices({ productId, page: pageOrCursor });
     }
+    return this.queryCloudDevices({ productId, ...pageOrCursor });
+  }
 
+  private async queryCloudDevices(params: {
+    productId?: string;
+    lastId?: string;
+    pageSize?: number;
+    page?: number;
+  }): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }> {
     // Prefer Cloud Development device list (IoT Core). Cursor via last_id.
     // Numeric `page` kept for mock/tests: page>1 returns empty for live (callers should use lastId).
-    const pageSize =
-      typeof pageOrCursor === 'object' ? (pageOrCursor.pageSize ?? 20) : 20;
-    const lastId = typeof pageOrCursor === 'object' ? pageOrCursor.lastId : undefined;
-    if (typeof pageOrCursor === 'number' && pageOrCursor > 1) {
+    if (params.page != null && params.page > 1) {
       return { list: [], total: 0 };
     }
 
     const query: Record<string, string | number> = {
-      product_ids: productId,
-      page_size: pageSize,
+      page_size: params.pageSize ?? 20,
     };
-    if (lastId) {
-      query.last_id = lastId;
-    }
+    if (params.productId) query.product_ids = params.productId;
+    if (params.lastId) query.last_id = params.lastId;
+    const productId = params.productId ?? '';
 
     const res = await this.context.request<Array<Record<string, unknown>> | {
       list?: Array<Record<string, unknown>>;
@@ -315,13 +465,13 @@ export class TuyaLiveClient implements TuyaClient {
     if (!res.success) {
       const code = (res as { code?: number }).code;
       const msg = (res as { msg?: string }).msg ?? 'unknown';
-      this.logger.warn(`listDevicesByProduct failed for ${productId}: code=${code} msg=${msg}`);
+      this.logger.warn(`listDevices failed${productId ? ` for ${productId}` : ''}: code=${code} msg=${msg}`);
       if (code === 28841002) {
         throw new Error(
-          `涂鸦 IoT Core 未开通或试用已到期 [${code}]。消息队列仍可独立工作；请到云开发 → 云服务 → IoT Core 申请延长试用后，再点「触发同步」。也可先把真实 productId 加入 TUYA_PRODUCT_IDS，靠 bridge 事件入库。`,
+          `涂鸦 IoT Core 未开通或试用已到期 [${code}]。请到云开发 → 云服务 → IoT Core 申请延长试用后再点「触发同步」。`,
         );
       }
-      throw new Error(`涂鸦 OpenAPI 失败 (${productId}): [${code}] ${msg}`);
+      throw new Error(`涂鸦 OpenAPI 失败${productId ? ` (${productId})` : ''}: [${code}] ${msg}`);
     }
 
     const raw = res.result;
@@ -348,7 +498,7 @@ export class TuyaLiveClient implements TuyaClient {
         lat: d.lat != null && String(d.lat) !== '' ? String(d.lat) : undefined,
         lon: d.lon != null && String(d.lon) !== '' ? String(d.lon) : undefined,
       }))
-      .filter((d) => d.deviceId && isAllowedProduct(d.productId, this.allowedProducts));
+      .filter((d) => d.deviceId);
 
     const nextLastId = list.length > 0 ? list[list.length - 1].deviceId : undefined;
     const total =
@@ -681,6 +831,282 @@ export class TuyaLiveClient implements TuyaClient {
       percentage: String(row.percentage ?? ''),
     }));
   }
+
+  async getDevicesDatasSurvey(params?: {
+    productId?: string;
+  }): Promise<TuyaDevicesDatasSurvey> {
+    const query: Record<string, string> = {};
+    if (params?.productId) query.product_id = params.productId;
+    const res = await this.context.request<Record<string, unknown>>({
+      method: 'GET',
+      path: '/v1.0/devices/datas-survey',
+      query: Object.keys(query).length ? query : undefined,
+    });
+    if (!res.success) {
+      throw new Error(
+        `Tuya getDevicesDatasSurvey failed: [${(res as { code?: number }).code}] ${(res as { msg?: string }).msg}`,
+      );
+    }
+    return parseDevicesDatasSurvey(res.result ?? {});
+  }
+
+  async getDevicesSurvey(params?: {
+    productId?: string;
+  }): Promise<TuyaDevicesDatasSurvey> {
+    return this.getDevicesDatasSurvey(params);
+  }
+
+  async getDevicesLiveDatasSurvey(params?: {
+    productId?: string;
+  }): Promise<TuyaDevicesLiveDatasSurvey> {
+    const query: Record<string, string> = {};
+    if (params?.productId) query.product_id = params.productId;
+    const res = await this.context.request<Record<string, unknown>>({
+      method: 'GET',
+      path: '/v1.0/devices/live-datas-survey',
+      query: Object.keys(query).length ? query : undefined,
+    });
+    if (!res.success) {
+      throw new Error(
+        `Tuya getDevicesLiveDatasSurvey failed: [${(res as { code?: number }).code}] ${(res as { msg?: string }).msg}`,
+      );
+    }
+    const row = res.result ?? {};
+    return {
+      deviceOnline: numField(row, ['device_online', 'deviceOnline', 'online_num', 'onlineNum']),
+      deviceOffline: numField(row, ['device_offline', 'deviceOffline', 'offline_num', 'offlineNum']),
+      deviceActive: numField(row, ['device_active', 'deviceActive', 'active_num', 'activeNum']),
+      deviceFault: numField(row, ['device_fault', 'deviceFault', 'fault_num', 'faultNum']),
+      raw: row,
+    };
+  }
+
+  async reverseGeocode(params: {
+    latitude: string;
+    longitude: string;
+  }): Promise<TuyaGeocodeResult> {
+    const res = await this.context.request<Record<string, unknown>>({
+      method: 'GET',
+      path: '/v1.0/iot-03/geocode-cities/latitude-longitude',
+      query: {
+        latitude: params.latitude,
+        longitude: params.longitude,
+      },
+    });
+    if (!res.success) {
+      throw new Error(
+        `Tuya reverseGeocode failed: [${(res as { code?: number }).code}] ${(res as { msg?: string }).msg}`,
+      );
+    }
+    const row = res.result ?? {};
+    return {
+      longitude: String(row.longitude ?? params.longitude),
+      latitude: String(row.latitude ?? params.latitude),
+      address: String(row.address ?? ''),
+    };
+  }
+
+  async getDeviceReportLogs(params: {
+    deviceId: string;
+    codes: string;
+    startTime: number;
+    endTime: number;
+    size?: number;
+    lastRowKey?: string;
+  }): Promise<TuyaDeviceReportLogsPage> {
+    // iot-03 report-logs is not authorized on this cloud project (28841105).
+    // Device logs type=7 is the data-point report stream and is authorized.
+    const query: Record<string, string> = {
+      type: '7',
+      start_time: String(params.startTime),
+      end_time: String(params.endTime),
+      size: String(Math.min(params.size ?? 20, 100)),
+    };
+    if (params.lastRowKey) query.start_row_key = params.lastRowKey;
+    const res = await this.context.request<Record<string, unknown>>({
+      method: 'GET',
+      path: `/v1.0/devices/${params.deviceId}/logs`,
+      query,
+    });
+    if (!res.success) {
+      throw new Error(
+        `Tuya getDeviceReportLogs failed: [${(res as { code?: number }).code}] ${(res as { msg?: string }).msg}`,
+      );
+    }
+    const row = res.result ?? {};
+    const wanted = new Set(
+      params.codes
+        .split(',')
+        .map((code) => code.trim())
+        .filter(Boolean),
+    );
+    const rawList = (row.logs ?? row.list ?? []) as Array<Record<string, unknown>>;
+    const list = rawList
+      .map((item) => ({
+        code: String(item.code ?? ''),
+        value: parseReportValue(item.value),
+        eventTime: Number(item.event_time ?? item.eventTime ?? 0),
+      }))
+      .filter((item) => item.code && (wanted.size === 0 || wanted.has(item.code)));
+    return {
+      deviceId: String(row.device_id ?? row.deviceId ?? params.deviceId),
+      hasMore: Boolean(row.has_next ?? row.hasNext ?? row.has_more ?? row.hasMore),
+      total: list.length,
+      lastRowKey:
+        row.next_row_key != null
+          ? String(row.next_row_key)
+          : row.last_row_key != null
+            ? String(row.last_row_key)
+            : undefined,
+      list,
+    };
+  }
+
+  async getDeviceUpgradeInfos(deviceId: string): Promise<TuyaFirmwareUpgradeInfo[]> {
+    const res = await this.context.request<unknown>({
+      method: 'GET',
+      path: `/v1.0/devices/${deviceId}/upgrade-infos`,
+    });
+    if (!res.success) {
+      throw new Error(
+        `Tuya getDeviceUpgradeInfos failed: [${(res as { code?: number }).code}] ${(res as { msg?: string }).msg}`,
+      );
+    }
+    const raw = res.result;
+    const list = Array.isArray(raw)
+      ? raw
+      : raw && typeof raw === 'object' && Array.isArray((raw as { list?: unknown }).list)
+        ? ((raw as { list: unknown[] }).list as unknown[])
+        : [];
+    return list.map((item) => {
+      const row = (item ?? {}) as Record<string, unknown>;
+      return {
+        type:
+          row.module_type != null
+            ? String(row.module_type)
+            : row.type != null
+              ? String(row.type)
+              : undefined,
+        currentVersion:
+          row.current_version != null
+            ? String(row.current_version)
+            : row.currentVersion != null
+              ? String(row.currentVersion)
+              : undefined,
+        version: row.version != null ? String(row.version) : undefined,
+        upgradeStatus: (row.upgrade_status ?? row.upgradeStatus) as number | string | undefined,
+        desc:
+          row.module_desc != null
+            ? String(row.module_desc)
+            : row.desc != null
+              ? String(row.desc)
+              : undefined,
+        raw: row,
+      };
+    });
+  }
+}
+
+type ThingTypeSpec = {
+  type?: string;
+  range?: string[];
+  label?: string[];
+  maxlen?: number;
+  max?: number;
+  min?: number;
+  scale?: number;
+  step?: number;
+  unit?: string;
+};
+
+export function propertiesFromThingModel(modelJson: string): StandardFunction[] {
+  let parsed: { services?: Array<{ properties?: Array<Record<string, unknown>> }> };
+  try {
+    parsed = JSON.parse(modelJson) as typeof parsed;
+  } catch {
+    return [];
+  }
+  const out: StandardFunction[] = [];
+  for (const service of parsed.services ?? []) {
+    for (const prop of service.properties ?? []) {
+      const code = String(prop.code ?? '');
+      if (!code) continue;
+      const spec = (prop.typeSpec ?? {}) as ThingTypeSpec;
+      const mapped = mapThingType(spec);
+      const abilityId = Number(prop.abilityId);
+      out.push({
+        code,
+        name: prop.name != null ? String(prop.name) : undefined,
+        mode: prop.accessMode != null ? String(prop.accessMode) : undefined,
+        type: mapped.type,
+        values: mapped.values,
+        dpId: Number.isFinite(abilityId) ? abilityId : undefined,
+      });
+    }
+  }
+  return out;
+}
+
+function mapThingType(spec: ThingTypeSpec): { type: string; values: Record<string, unknown> } {
+  const type = spec.type ?? 'string';
+  if (type === 'bool') return { type: 'boolean', values: { type: 'bool' } };
+  if (type === 'enum') return { type: 'enum', values: { range: spec.range ?? [], type: 'enum' } };
+  if (type === 'value') {
+    return {
+      type: 'integer',
+      values: {
+        type: 'value',
+        max: spec.max,
+        min: spec.min,
+        scale: spec.scale,
+        step: spec.step,
+        unit: spec.unit,
+      },
+    };
+  }
+  if (type === 'bitmap') {
+    return {
+      type: 'bitmap',
+      values: { type: 'bitmap', label: spec.label ?? [], maxlen: spec.maxlen },
+    };
+  }
+  return { type, values: { ...spec, type } };
+}
+
+function parseReportValue(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const text = value.trim();
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text);
+  return value;
+}
+
+function numField(row: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    if (row[key] != null && row[key] !== '') {
+      const n = Number(row[key]);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return 0;
+}
+
+function parseDevicesDatasSurvey(row: Record<string, unknown>): TuyaDevicesDatasSurvey {
+  return {
+    deviceTotal: numField(row, [
+      'device_num',
+      'deviceNum',
+      'device_total',
+      'deviceTotal',
+      'total',
+    ]),
+    deviceOnline: numField(row, ['device_online', 'deviceOnline', 'online_num', 'onlineNum']),
+    deviceOffline: numField(row, ['device_offline', 'deviceOffline', 'offline_num', 'offlineNum']),
+    deviceActive: numField(row, ['device_active', 'deviceActive', 'active_num', 'activeNum']),
+    deviceFault: numField(row, ['device_fault', 'deviceFault', 'fault_num', 'faultNum']),
+    raw: row,
+  };
 }
 
 function normalizeDay(value: unknown): string {

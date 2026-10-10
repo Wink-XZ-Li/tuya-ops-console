@@ -2,6 +2,7 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { DeviceOnlineStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TUYA_CLIENT, TuyaClient } from '../tuya/tuya.client';
+import { presentLocationText } from './china-admin';
 import {
   asRecord,
   deriveFaultFields,
@@ -64,7 +65,15 @@ export class DevicesService {
       this.prisma.device.count({ where }),
     ]);
 
-    return { items, total, page, pageSize };
+    return {
+      items: items.map((device) => ({
+        ...device,
+        locationText: presentLocationText(device.locationText, device.lat, device.lon),
+      })),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async getByDeviceId(deviceId: string) {
@@ -135,6 +144,35 @@ export class DevicesService {
     });
 
     return this.getByDeviceId(deviceId);
+  }
+
+  async getCloudReportLogs(
+    deviceId: string,
+    params: { codes?: string; hours?: number; size?: number },
+  ) {
+    const device = await this.prisma.device.findUnique({ where: { deviceId } });
+    if (!device) {
+      throw new NotFoundException(`Device ${deviceId} not found`);
+    }
+    const endTime = Date.now();
+    const hours = Math.min(Math.max(params.hours ?? 24, 1), 168);
+    const startTime = endTime - hours * 3600_000;
+    return this.tuya.getDeviceReportLogs({
+      deviceId,
+      codes: params.codes?.trim() || '',
+      startTime,
+      endTime,
+      size: Math.min(params.size ?? 20, 100),
+    });
+  }
+
+  async getFirmware(deviceId: string) {
+    const device = await this.prisma.device.findUnique({ where: { deviceId } });
+    if (!device) {
+      throw new NotFoundException(`Device ${deviceId} not found`);
+    }
+    const upgrades = await this.tuya.getDeviceUpgradeInfos(deviceId);
+    return { deviceId, upgrades };
   }
 
   async listEvents(deviceId: string, params: ListDeviceEventsParams) {
@@ -245,7 +283,7 @@ export class DevicesService {
       faultInfo: device.faultInfo,
       lat: device.lat,
       lon: device.lon,
-      locationText: device.locationText,
+      locationText: presentLocationText(device.locationText, device.lat, device.lon),
       signalStrength: device.signalStrength,
       lastSeenAt: device.lastSeenAt,
       bindings: device.bindings.map(

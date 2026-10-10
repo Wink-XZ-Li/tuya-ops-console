@@ -5,25 +5,6 @@ import { parseMqEnv, TuyaWebsocketConsumer } from './tuya-websocket';
 
 loadRootEnv();
 
-const DEFAULT_PRODUCT_IDS = [
-  'uhmj5b0ba31zpme6',
-  'qxjzruuqz40bty7e',
-  'nohrp3vbmef7vxvx',
-  '7sylzgrdnnq2w5mo',
-];
-
-function parseAllowedProducts(raw = process.env.TUYA_PRODUCT_IDS ?? ''): Set<string> {
-  const ids = raw
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean);
-  return new Set(ids.length > 0 ? ids : DEFAULT_PRODUCT_IDS);
-}
-
-function isAllowedProduct(productId: string | undefined, allowed: Set<string>): boolean {
-  return Boolean(productId && allowed.has(productId));
-}
-
 async function main(): Promise<void> {
   const demoMode = process.env.DEMO_MODE ?? 'mock';
   if (demoMode !== 'live') {
@@ -37,7 +18,6 @@ async function main(): Promise<void> {
     throw new Error('TUYA_PULSAR_ACCESS_ID and TUYA_PULSAR_ACCESS_KEY are required in live mode');
   }
 
-  const allowedProducts = parseAllowedProducts();
   const kafka = new DeviceEventKafkaProducer({
     brokers: parseBrokers(),
     topic: process.env.KAFKA_TOPIC_DEVICE_EVENTS ?? 'tuya.device.events',
@@ -53,12 +33,7 @@ async function main(): Promise<void> {
   });
 
   const forward = async (message: DeviceBusMessage): Promise<void> => {
-    if (!isAllowedProduct(message.productId, allowedProducts)) {
-      console.log(
-        `Skipped ${message.bizCode || 'unknown'} device=${message.deviceId} product=${message.productId ?? '-'} (not in whitelist)`,
-      );
-      return;
-    }
+    if (!message.deviceId) return;
     await kafka.send(message);
     console.log(`Forwarded ${message.bizCode} device=${message.deviceId}`);
   };

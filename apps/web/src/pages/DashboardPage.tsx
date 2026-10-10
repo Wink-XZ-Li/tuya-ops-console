@@ -1,5 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { api, qs } from '../api/client';
+import { TrendChart } from '../components/TrendChart';
 import { formatProductLabel, PRODUCT_IDS } from '../constants/product-names';
 
 type SeriesPoint = { dt: string; value: number; label?: string };
@@ -72,11 +73,6 @@ function ymdToInput(ymd: string): string {
 
 function inputToYmd(value: string): string {
   return value.replace(/-/g, '');
-}
-
-function formatDtLabel(dt: string): string {
-  if (dt.length !== 8) return dt;
-  return `${dt.slice(4, 6)}-${dt.slice(6, 8)}`;
 }
 
 function formatNumber(n: number): string {
@@ -378,44 +374,11 @@ function Sparkline({
   color: string;
   emptyHint?: string;
 }) {
-  if (points.length === 0) {
-    return <p className="hint">{emptyHint}</p>;
-  }
-  const w = 320;
-  const h = 96;
-  const pad = 8;
-  const max = Math.max(1, ...points.map((p) => p.value));
-  const min = 0;
-  const span = max - min || 1;
-  const coords = points.map((p, i) => {
-    const x = pad + (i / Math.max(1, points.length - 1)) * (w - pad * 2);
-    const y = h - pad - ((p.value - min) / span) * (h - pad * 2);
-    return `${x},${y}`;
-  });
-  const area = `${pad},${h - pad} ${coords.join(' ')} ${w - pad},${h - pad}`;
-  const first = points[0];
-  const last = points[points.length - 1];
-
   return (
-    <div className="sparkline-wrap">
-      <svg viewBox={`0 0 ${w} ${h}`} className="sparkline" role="img" aria-label="趋势图">
-        <polygon points={area} fill={color} opacity="0.12" />
-        <polyline
-          points={coords.join(' ')}
-          fill="none"
-          stroke={color}
-          strokeWidth="2"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-      </svg>
-      <div className="sparkline-meta">
-        <span className="mono">{formatDtLabel(first.dt)}</span>
-        <span className="mono">
-          峰值 {formatNumber(max)} · 末值 {formatNumber(last.value)}
-        </span>
-        <span className="mono">{formatDtLabel(last.dt)}</span>
-      </div>
-    </div>
+    <TrendChart
+      values={points.map((p) => ({ day: p.dt, value: p.value }))}
+      color={color.startsWith('var(') ? '#0b6bcb' : color}
+      emptyHint={emptyHint}
+    />
   );
 }

@@ -4,7 +4,6 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { isAllowedProduct, parseProductIds } from '../tuya/tuya.client';
 
 export interface UpsertDpAliasDto {
   productId: string;
@@ -20,8 +19,6 @@ export interface ListDpAliasesParams {
 
 @Injectable()
 export class DpAliasesService {
-  private readonly allowedProducts = parseProductIds();
-
   constructor(private readonly prisma: PrismaService) {}
 
   async list(params: ListDpAliasesParams) {
@@ -36,10 +33,6 @@ export class DpAliasesService {
   }
 
   async upsert(dto: UpsertDpAliasDto) {
-    if (!isAllowedProduct(dto.productId, this.allowedProducts)) {
-      throw new NotFoundException(`Product ${dto.productId} is not allowed`);
-    }
-
     return this.prisma.dpAlias.upsert({
       where: {
         productId_code: { productId: dto.productId, code: dto.code },

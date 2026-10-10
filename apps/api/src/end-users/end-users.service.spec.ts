@@ -62,7 +62,7 @@ describe('EndUsersService.getCloudSnapshot', () => {
       expect.objectContaining({
         deviceId: 'dev-out',
         inConsole: false,
-        allowedProduct: false,
+        allowedProduct: true,
       }),
     ]);
     expect(snap.user.nickName).toBe('昵称');

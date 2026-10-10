@@ -17,4 +17,4 @@
 7. `pnpm dev:bridge`（本服务）
 8. `pnpm dev:web`
 
-白名单外 `productId` 在 normalize 后丢弃，不转发到 Kafka。
+有 `deviceId` 的消息都会转发到 Kafka，不再按产品白名单丢弃。

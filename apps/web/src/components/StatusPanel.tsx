@@ -42,6 +42,24 @@ function enumOptions(values: Record<string, unknown> | null): string[] {
   return [];
 }
 
+function formatStatusValue(value: unknown, values: Record<string, unknown> | null): string {
+  if (value === undefined || value === null || value === '') return '—';
+  const labels = values && Array.isArray(values.label) ? values.label.map(String) : null;
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^\d+$/.test(value.trim())
+        ? Number(value.trim())
+        : null;
+  if (labels && numeric != null && Number.isFinite(numeric)) {
+    const n = numeric >>> 0;
+    if (n === 0) return '0';
+    const active = labels.filter((_, i) => (n & (1 << i)) !== 0);
+    return active.length ? `${n} · ${active.join('+')}` : String(n);
+  }
+  return JSON.stringify(value);
+}
+
 function isWritable(fn: DeviceFunction): boolean {
   const mode = (fn.mode ?? 'rw').toLowerCase();
   return mode.includes('w') || mode === 'rw' || mode === 'wr';
@@ -113,13 +131,15 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
     return <p className="muted">暂无状态点</p>;
   }
 
+  const showId = rows.some((row) => row.sortOrder !== Number.MAX_SAFE_INTEGER);
+
   return (
     <div>
       <div className="table-wrap">
-        <table className="data">
+        <table className="data status-table">
           <thead>
             <tr>
-              <th>id</th>
+              {showId && <th>id</th>}
               <th>code</th>
               <th>名称</th>
               <th>当前值</th>
@@ -139,17 +159,18 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
 
               return (
                 <tr key={row.code} className="no-click">
-                  <td className="mono">{dpId ?? '—'}</td>
+                  {showId && <td className="mono">{dpId ?? '—'}</td>}
                   <td className="mono">{row.code}</td>
                   <td>
-                    {label}
-                    <div className="muted" style={{ fontSize: '0.75rem' }}>
-                      {row.writable ? '可下发' : '只读'}
-                      {fn?.type ? ` · ${fn.type}` : ''}
+                    <div className="status-name">
+                      <span>{label !== row.code ? label : '—'}</span>
+                      <span className={`tag ${row.writable ? 'tag-rw' : ''}`}>
+                        {row.writable ? '可下发' : '只读'}
+                      </span>
                     </div>
                   </td>
                   <td>
-                    <code className="mono">{row.value === undefined ? '—' : JSON.stringify(row.value)}</code>
+                    <code className="mono">{formatStatusValue(row.value, parsed)}</code>
                   </td>
                   <td>
                     {row.writable ? (

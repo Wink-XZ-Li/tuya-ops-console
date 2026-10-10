@@ -26,7 +26,7 @@ describe('SyncService', () => {
 
   it('skips new devices when global count would reach MAX_DEVICES', async () => {
     const tuya = {
-      listDevicesByProduct: jest.fn().mockResolvedValue({
+      listDevices: jest.fn().mockResolvedValue({
         list: [
           { deviceId: 'new-1', productId: 'uhmj5b0ba31zpme6', name: 'New', online: true },
         ],
@@ -35,6 +35,11 @@ describe('SyncService', () => {
       getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
       getDeviceStatus: jest.fn().mockResolvedValue([]),
       getUserProfile: jest.fn().mockResolvedValue(null),
+      reverseGeocode: jest.fn().mockResolvedValue({
+        latitude: '0',
+        longitude: '0',
+        address: 'mock',
+      }),
     };
     const prisma = basePrisma();
     const svc = new SyncService(prisma, tuya as any);
@@ -46,7 +51,7 @@ describe('SyncService', () => {
   it('still upserts existing devices at global cap', async () => {
     const existing = { id: 'dev-1', deviceId: 'existing-1' };
     const tuya = {
-      listDevicesByProduct: jest.fn().mockResolvedValue({
+      listDevices: jest.fn().mockResolvedValue({
         list: [
           {
             deviceId: 'existing-1',
@@ -60,6 +65,11 @@ describe('SyncService', () => {
       getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
       getDeviceStatus: jest.fn().mockResolvedValue([]),
       getUserProfile: jest.fn().mockResolvedValue(null),
+      reverseGeocode: jest.fn().mockResolvedValue({
+        latitude: '0',
+        longitude: '0',
+        address: 'mock',
+      }),
     };
     const prisma = basePrisma({
       device: {

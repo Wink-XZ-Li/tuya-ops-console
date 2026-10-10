@@ -242,7 +242,6 @@ export function UserDetailPage() {
   const [homes, setHomes] = useState<UserHome[]>([]);
   const [cloudDevices, setCloudDevices] = useState<CloudDevice[]>([]);
   const [localDevices, setLocalDevices] = useState<DeviceRow[]>([]);
-  const [showAllProducts, setShowAllProducts] = useState(false);
   const [fromFilter, setFromFilter] = useState<'all' | 'home' | 'sharing'>('all');
   const [expandedStatus, setExpandedStatus] = useState<string | null>(null);
   const [cloudLoading, setCloudLoading] = useState(false);
@@ -346,7 +345,6 @@ export function UserDetailPage() {
     : [];
 
   const filteredDevices = cloudDevices.filter((d) => {
-    if (!showAllProducts && !d.allowedProduct) return false;
     if (fromFilter !== 'all' && d.from !== fromFilter) return false;
     return true;
   });
@@ -525,14 +523,6 @@ export function UserDetailPage() {
         <div className="page-header" style={{ marginBottom: '0.75rem' }}>
           <h2 style={{ margin: 0, fontSize: '1.05rem' }}>云端设备</h2>
           <div className="row gap" style={{ alignItems: 'center' }}>
-            <label className="muted" style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-              <input
-                type="checkbox"
-                checked={showAllProducts}
-                onChange={(e) => setShowAllProducts(e.target.checked)}
-              />
-              显示全部云端设备
-            </label>
             <select
               value={fromFilter}
               onChange={(e) => setFromFilter(e.target.value as 'all' | 'home' | 'sharing')}
@@ -544,7 +534,7 @@ export function UserDetailPage() {
           </div>
         </div>
         <p className="hint" style={{ marginTop: 0 }}>
-          默认仅显示本台产品白名单内设备；「已入库」表示控制台 Device 表已有记录。不自动改绑定表。
+          用户关联的云端设备都可以同步入库。「已入库」表示控制台 Device 表已有记录。不自动改绑定表。
         </p>
         {filteredDevices.length === 0 ? (
           <p className="muted">{cloudLoading ? '加载中…' : '暂无设备'}</p>
@@ -575,11 +565,6 @@ export function UserDetailPage() {
                     <td>{d.name ?? '—'}</td>
                     <td title={d.productId}>
                       {d.productId ? formatProductLabel(d.productId) : d.productName ?? '—'}
-                      {!d.allowedProduct && (
-                        <span className="muted" style={{ marginLeft: 4 }}>
-                          （非本台）
-                        </span>
-                      )}
                     </td>
                     <td>
                       {d.online === true ? (
@@ -605,7 +590,7 @@ export function UserDetailPage() {
                             {expandedStatus === d.deviceId ? '收起状态' : '状态'}
                           </button>
                         )}
-                        {!d.inConsole && d.allowedProduct && canEdit && (
+                        {!d.inConsole && canEdit && (
                           <button
                             type="button"
                             className="btn"

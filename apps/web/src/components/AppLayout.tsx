@@ -54,6 +54,18 @@ function IconCommands() {
   );
 }
 
+function IconAnalytics() {
+  return (
+    <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden>
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <path d="M8 15v-4" />
+      <path d="M12 15V8" />
+      <path d="M16 15v-6" />
+    </svg>
+  );
+}
+
 function IconSettings() {
   return (
     <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden>
@@ -75,7 +87,7 @@ export function AppLayout() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
+      <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden />
           涂鸦运维台
@@ -84,6 +96,34 @@ export function AppLayout() {
           <NavLink className={({ isActive }) => (isActive ? 'active' : undefined)} to="/" end>
             <IconDashboard />
             看板
+          </NavLink>
+          <NavLink
+            className={({ isActive }) => (isActive ? 'active' : undefined)}
+            to="/analytics/users"
+          >
+            <IconAnalytics />
+            用户分析
+          </NavLink>
+          <NavLink
+            className={({ isActive }) => (isActive ? 'active' : undefined)}
+            to="/analytics/devices"
+          >
+            <IconAnalytics />
+            设备分析
+          </NavLink>
+          <NavLink
+            className={({ isActive }) => (isActive ? 'active' : undefined)}
+            to="/analytics/faults"
+          >
+            <IconAlerts />
+            故障分析
+          </NavLink>
+          <NavLink
+            className={({ isActive }) => (isActive ? 'active' : undefined)}
+            to="/analytics/reports"
+          >
+            <IconDashboard />
+            报表
           </NavLink>
           <NavLink className={({ isActive }) => (isActive ? 'active' : undefined)} to="/devices">
             <IconDevices />
@@ -111,18 +151,18 @@ export function AppLayout() {
             </NavLink>
           </RoleGate>
         </nav>
-        <div className="topbar-right">
+        <div className="sidebar-foot">
           <span className={`badge ${DEMO_MODE === 'live' ? 'live' : 'mock'}`}>
             {DEMO_MODE === 'live' ? 'live' : 'mock'}
           </span>
-          <span className="mono">
+          <span className="mono sidebar-user">
             {username} · {role}
           </span>
           <button type="button" className="btn" onClick={logout}>
             退出
           </button>
         </div>
-      </header>
+      </aside>
       <main className="main">
         <Outlet />
       </main>

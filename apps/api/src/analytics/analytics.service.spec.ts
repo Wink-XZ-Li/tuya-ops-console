@@ -41,8 +41,9 @@ describe('AnalyticsService.getDashboard', () => {
         .fn()
         .mockResolvedValue([{ name: '广东', value: 10, percentage: '50%' }]),
     };
+    const prisma = {} as any;
 
-    const svc = new AnalyticsService(tuya as any);
+    const svc = new AnalyticsService(tuya as any, prisma);
     const first = await svc.getDashboard({
       startDay: '20260701',
       endDay: '20260702',
@@ -84,7 +85,7 @@ describe('AnalyticsService.getDashboard', () => {
         .mockRejectedValueOnce(new Error('没有操作权限！'))
         .mockResolvedValueOnce([{ name: '河南', value: 3, percentage: '100%' }]),
     };
-    const svc = new AnalyticsService(tuya as any);
+    const svc = new AnalyticsService(tuya as any, {} as any);
     const res = await svc.getDashboard({
       startDay: '20260701',
       endDay: '20260730',

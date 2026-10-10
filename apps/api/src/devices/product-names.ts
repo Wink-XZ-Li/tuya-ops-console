@@ -4,6 +4,9 @@ export const PRODUCT_NAMES: Record<string, string> = {
   'qxjzruuqz40bty7e': "一路开关",
   'nohrp3vbmef7vxvx': "西屋即热式电热水器-旋钮款",
   '7sylzgrdnnq2w5mo': "国内伊莱克斯燃气壁挂炉T15（T8b）",
+  'wquesyz0b2h8mxsu': "斯德哥尔摩-400G",
+  'ckjfqtnqqystvfaa': "国内伊莱克斯燃气壁挂炉T16-VT1系列",
+  '90wi2aimyqstn9qc': "国内西屋燃气壁挂炉T6-WX2系列",
 };
 
 export const PRODUCT_IDS = Object.keys(PRODUCT_NAMES);

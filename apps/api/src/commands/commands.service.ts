@@ -1,18 +1,8 @@
-import {
-  ForbiddenException,
-  Inject,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { getProductDps } from '../devices/product-dp-schemas';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  isAllowedProduct,
-  parseProductIds,
-  TUYA_CLIENT,
-  TuyaClient,
-} from '../tuya/tuya.client';
+import { TUYA_CLIENT, TuyaClient } from '../tuya/tuya.client';
 
 export interface SendCommandDto {
   code: string;
@@ -34,8 +24,6 @@ function mapSchemaType(type: string): string {
 
 @Injectable()
 export class CommandsService {
-  private readonly allowedProducts = parseProductIds();
-
   constructor(
     private readonly prisma: PrismaService,
     @Inject(TUYA_CLIENT) private readonly tuya: TuyaClient,
@@ -43,8 +31,9 @@ export class CommandsService {
 
   async getFunctions(deviceId: string) {
     const device = await this.requireDevice(deviceId);
-    const [standard, aliases] = await Promise.all([
+    const [standard, model, aliases] = await Promise.all([
       this.tuya.getStandardFunctions(deviceId).catch(() => []),
+      this.tuya.getThingProperties(deviceId).catch(() => []),
       this.prisma.dpAlias.findMany({
         where: { productId: device.productId },
       }),
@@ -75,15 +64,36 @@ export class CommandsService {
       });
     }
 
+    for (const dp of model) {
+      const existing = byCode.get(dp.code);
+      byCode.set(dp.code, {
+        code: dp.code,
+        name: dp.name ?? existing?.name,
+        type: dp.type ?? existing?.type,
+        values: dp.values ?? existing?.values,
+        mode: dp.mode ?? existing?.mode,
+        sortOrder: dp.dpId ?? existing?.sortOrder,
+      });
+    }
+
     for (const fn of standard) {
       const existing = byCode.get(fn.code);
+      if (existing) {
+        byCode.set(fn.code, {
+          ...existing,
+          name: existing.name ?? fn.name,
+          type: existing.type ?? fn.type,
+          values: existing.values ?? fn.values,
+          mode: existing.mode ?? fn.mode ?? 'rw',
+        });
+        continue;
+      }
       byCode.set(fn.code, {
         code: fn.code,
-        name: fn.name ?? existing?.name,
-        type: fn.type ?? existing?.type,
-        values: fn.values ?? existing?.values,
-        mode: fn.mode ?? existing?.mode ?? 'rw',
-        sortOrder: existing?.sortOrder,
+        name: fn.name,
+        type: fn.type,
+        values: fn.values,
+        mode: fn.mode ?? 'rw',
       });
     }
 
@@ -182,9 +192,6 @@ export class CommandsService {
     const device = await this.prisma.device.findUnique({ where: { deviceId } });
     if (!device) {
       throw new NotFoundException(`Device ${deviceId} not found`);
-    }
-    if (!isAllowedProduct(device.productId, this.allowedProducts)) {
-      throw new ForbiddenException(`Product ${device.productId} is not allowed`);
     }
     return device;
   }

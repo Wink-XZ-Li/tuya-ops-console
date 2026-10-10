@@ -29,6 +29,27 @@ export class DevicesController {
     return this.devicesService.refreshStatus(deviceId);
   }
 
+  @Get(':deviceId/cloud-logs')
+  @Roles('readonly', 'operator', 'admin')
+  cloudLogs(
+    @Param('deviceId') deviceId: string,
+    @Query('codes') codes?: string,
+    @Query('hours') hours?: string,
+    @Query('size') size?: string,
+  ) {
+    return this.devicesService.getCloudReportLogs(deviceId, {
+      codes,
+      hours: hours ? Number(hours) : undefined,
+      size: size ? Number(size) : undefined,
+    });
+  }
+
+  @Get(':deviceId/firmware')
+  @Roles('readonly', 'operator', 'admin')
+  firmware(@Param('deviceId') deviceId: string) {
+    return this.devicesService.getFirmware(deviceId);
+  }
+
   @Get(':deviceId')
   @Roles('readonly', 'operator', 'admin')
   getOne(@Param('deviceId') deviceId: string) {

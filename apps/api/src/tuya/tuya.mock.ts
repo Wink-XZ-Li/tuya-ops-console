@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   isAllowedProduct,
-  parseProductIds,
   ListAppUsersPage,
   StandardFunction,
   TuyaClient,
@@ -9,6 +8,11 @@ import {
   TuyaDeviceDetail,
   TuyaDeviceStatPoint,
   TuyaDeviceSummary,
+  TuyaDevicesDatasSurvey,
+  TuyaDevicesLiveDatasSurvey,
+  TuyaDeviceReportLogsPage,
+  TuyaFirmwareUpgradeInfo,
+  TuyaGeocodeResult,
   TuyaLocationActivePoint,
   TuyaLocationDateType,
   TuyaLocationRegionType,
@@ -55,15 +59,10 @@ const MOCK_DEVICE_USERS: Record<string, string[]> = {
 @Injectable()
 export class TuyaMockClient implements TuyaClient {
   private readonly logger = new Logger(TuyaMockClient.name);
-  private readonly allowedProducts: Set<string>;
-
-  constructor(allowedProducts: Set<string> = parseProductIds()) {
-    this.allowedProducts = allowedProducts;
-  }
 
   async getDevice(deviceId: string): Promise<TuyaDeviceDetail> {
     const device = MOCK_DEVICES.find((d) => d.deviceId === deviceId);
-    if (!device || !isAllowedProduct(device.productId, this.allowedProducts)) {
+    if (!device) {
       throw new Error(`Device ${deviceId} not found`);
     }
     return { ...device };
@@ -77,6 +76,10 @@ export class TuyaMockClient implements TuyaClient {
     return MOCK_FUNCTIONS;
   }
 
+  async getThingProperties(_deviceId: string): Promise<StandardFunction[]> {
+    return [];
+  }
+
   async sendStandardCommand(
     deviceId: string,
     commands: Array<{ code: string; value: unknown }>,
@@ -85,13 +88,24 @@ export class TuyaMockClient implements TuyaClient {
     return { success: true, mock: true };
   }
 
+  async listDevices(
+    pageOrCursor: { lastId?: string; pageSize?: number } = {},
+  ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }> {
+    const pageSize = pageOrCursor.pageSize ?? 20;
+    let start = 0;
+    if (pageOrCursor.lastId) {
+      const idx = MOCK_DEVICES.findIndex((d) => d.deviceId === pageOrCursor.lastId);
+      start = idx >= 0 ? idx + 1 : MOCK_DEVICES.length;
+    }
+    const list = MOCK_DEVICES.slice(start, start + pageSize);
+    const nextLastId = list.length > 0 ? list[list.length - 1].deviceId : undefined;
+    return { list, total: MOCK_DEVICES.length, nextLastId };
+  }
+
   async listDevicesByProduct(
     productId: string,
     pageOrCursor: number | { lastId?: string; pageSize?: number } = 1,
   ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }> {
-    if (!isAllowedProduct(productId, this.allowedProducts)) {
-      return { list: [], total: 0 };
-    }
     const filtered = MOCK_DEVICES.filter((d) => d.productId === productId);
     const pageSize =
       typeof pageOrCursor === 'object' ? (pageOrCursor.pageSize ?? 20) : 20;
@@ -277,6 +291,90 @@ export class TuyaMockClient implements TuyaClient {
       { name: '其他', value: 384, percentage: '37.42%' },
     ];
     return all.slice(0, params.limit ?? 20);
+  }
+
+  async getDevicesDatasSurvey(params?: {
+    productId?: string;
+  }): Promise<TuyaDevicesDatasSurvey> {
+    const list = params?.productId
+      ? MOCK_DEVICES.filter((d) => d.productId === params.productId)
+      : MOCK_DEVICES;
+    const online = list.filter((d) => d.online).length;
+    const offline = list.length - online;
+    const fault = Math.max(1, Math.floor(list.length / 4));
+    return {
+      deviceTotal: list.length,
+      deviceOnline: online,
+      deviceOffline: offline,
+      deviceActive: Math.max(online - 1, 0),
+      deviceFault: fault,
+      raw: { mock: true, productId: params?.productId ?? null },
+    };
+  }
+
+  async getDevicesSurvey(params?: {
+    productId?: string;
+  }): Promise<TuyaDevicesDatasSurvey> {
+    return this.getDevicesDatasSurvey(params);
+  }
+
+  async getDevicesLiveDatasSurvey(params?: {
+    productId?: string;
+  }): Promise<TuyaDevicesLiveDatasSurvey> {
+    const survey = await this.getDevicesDatasSurvey(params);
+    return {
+      deviceOnline: survey.deviceOnline,
+      deviceOffline: survey.deviceOffline,
+      deviceActive: survey.deviceActive,
+      deviceFault: survey.deviceFault,
+      raw: { mock: true, live: true, productId: params?.productId ?? null },
+    };
+  }
+
+  async reverseGeocode(params: {
+    latitude: string;
+    longitude: string;
+  }): Promise<TuyaGeocodeResult> {
+    return {
+      latitude: params.latitude,
+      longitude: params.longitude,
+      address: `模拟地址(${params.latitude},${params.longitude})`,
+    };
+  }
+
+  async getDeviceReportLogs(params: {
+    deviceId: string;
+    codes: string;
+    startTime: number;
+    endTime: number;
+    size?: number;
+    lastRowKey?: string;
+  }): Promise<TuyaDeviceReportLogsPage> {
+    const codes = params.codes.split(',').map((c) => c.trim()).filter(Boolean);
+    const size = params.size ?? 20;
+    const list = Array.from({ length: Math.min(size, 5) }, (_, i) => ({
+      code: codes[i % Math.max(codes.length, 1)] || 'switch',
+      value: i % 2 === 0,
+      eventTime: params.endTime - i * 3600_000,
+    }));
+    return {
+      deviceId: params.deviceId,
+      hasMore: false,
+      total: list.length,
+      list,
+    };
+  }
+
+  async getDeviceUpgradeInfos(deviceId: string): Promise<TuyaFirmwareUpgradeInfo[]> {
+    return [
+      {
+        type: '0',
+        currentVersion: '1.0.0',
+        version: '1.0.1',
+        upgradeStatus: 0,
+        desc: `mock firmware for ${deviceId}`,
+      },
+    ];
   }
 }
 

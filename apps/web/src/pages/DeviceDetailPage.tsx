@@ -53,6 +53,19 @@ export function DeviceDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [cloudLogs, setCloudLogs] = useState<
+    Array<{ code: string; value: unknown; eventTime: number }>
+  >([]);
+  const [firmware, setFirmware] = useState<
+    Array<{
+      type?: string;
+      currentVersion?: string;
+      version?: string;
+      upgradeStatus?: number | string;
+      desc?: string;
+    }>
+  >([]);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
   const role = getRole();
   const readonly = role === 'readonly';
 
@@ -133,6 +146,35 @@ export function DeviceDetailPage() {
     }
   }, []);
 
+  const loadEnrichment = useCallback(async (id: string) => {
+    setEnrichError(null);
+    const [logsResult, fwResult] = await Promise.allSettled([
+      api<{ list: Array<{ code: string; value: unknown; eventTime: number }> }>(
+        `/api/devices/${encodeURIComponent(id)}/cloud-logs${qs({ hours: 24, size: 20 })}`,
+      ),
+      api<{
+        upgrades: Array<{
+          type?: string;
+          currentVersion?: string;
+          version?: string;
+          upgradeStatus?: number | string;
+          desc?: string;
+        }>;
+      }>(`/api/devices/${encodeURIComponent(id)}/firmware`),
+    ]);
+    if (logsResult.status === 'fulfilled') {
+      setCloudLogs(logsResult.value.list ?? []);
+    }
+    if (fwResult.status === 'fulfilled') {
+      setFirmware(fwResult.value.upgrades ?? []);
+    }
+    const failed = [logsResult, fwResult].find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') {
+      const reason = failed.reason;
+      setEnrichError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }, []);
+
   const load = useCallback(
     async (id: string) => {
       setError(null);
@@ -143,11 +185,12 @@ export function DeviceDetailPage() {
         );
         setFunctions(fns);
         await loadEvents(id, { bizCodes, dpIds, from, to });
+        void loadEnrichment(id);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [bizCodes, dpIds, from, loadEvents, refreshStatus, to],
+    [bizCodes, dpIds, from, loadEnrichment, loadEvents, refreshStatus, to],
   );
 
   useEffect(() => {
@@ -182,81 +225,95 @@ export function DeviceDetailPage() {
     void loadEvents(deviceId, { bizCodes, dpIds, from, to });
   }
 
+  const faultText =
+    device?.faultStatus === 'fault' ? '故障' : device?.faultStatus === 'normal' ? '正常' : '未知';
+
   return (
     <div className="stack">
-      <div className="page-header">
-        <h1>设备详情</h1>
-        <Link to="/devices">← 返回列表</Link>
-      </div>
       {error && <p className="error">{error}</p>}
       {device && (
         <>
-          <div className="device-detail-top">
-            <div className="card">
-              <h2 style={{ marginTop: 0, fontSize: '1.05rem' }}>基本信息</h2>
-              <dl className="kv">
-                <dt>deviceId</dt>
-                <dd className="mono">{device.deviceId}</dd>
-                <dt>名称</dt>
-                <dd>{device.name ?? '—'}</dd>
-                <dt>产品</dt>
-                <dd>{formatProductLabel(device.productId)}</dd>
-                <dt>网络状态</dt>
-                <dd>{device.onlineStatus}</dd>
-                <dt>信号强度</dt>
-                <dd>{device.signalStrength ?? '—'}</dd>
-                <dt>故障情况</dt>
-                <dd>
-                  {device.faultStatus === 'fault'
-                    ? '故障'
-                    : device.faultStatus === 'normal'
-                      ? '正常'
-                      : '未知'}
-                </dd>
-                <dt>故障信息</dt>
-                <dd className="mono">
-                  {device.faultInfo
-                    ? formatFaultInfoDisplay(device.productId, device.faultInfo)
-                    : '—'}
-                </dd>
-                <dt>所在城市</dt>
-                <dd>{device.locationText ?? '—'}</dd>
-                <dt>未关闭告警</dt>
-                <dd>{device.openAlertCount}</dd>
-              </dl>
-              <h3 style={{ fontSize: '0.95rem' }}>绑定用户</h3>
+          <header className="card device-head">
+            <div>
+              <p className="device-kicker">设备详情</p>
+              <h1>{device.name || device.deviceId}</h1>
+              <p className="device-product">{formatProductLabel(device.productId)}</p>
+            </div>
+            <div className="device-head-side">
+              <span
+                className={`pill ${device.onlineStatus === 'online' ? 'ok' : device.onlineStatus === 'offline' ? 'bad' : ''}`}
+              >
+                {device.onlineStatus}
+              </span>
+              <span className={`pill ${device.faultStatus === 'fault' ? 'bad' : device.faultStatus === 'normal' ? 'ok' : ''}`}>
+                {faultText}
+              </span>
+              <span className={`pill ${device.openAlertCount > 0 ? 'warn' : ''}`}>
+                告警 {device.openAlertCount}
+              </span>
+              <Link className="btn ghost" to="/devices">
+                返回列表
+              </Link>
+            </div>
+          </header>
+
+          <section className="card device-facts">
+            <div>
+              <span className="fact-label">设备 ID</span>
+              <span className="mono">{device.deviceId}</span>
+            </div>
+            <div>
+              <span className="fact-label">信号强度</span>
+              <span>{device.signalStrength ?? '—'}</span>
+            </div>
+            <div>
+              <span className="fact-label">故障信息</span>
+              <span className="mono">
+                {device.faultInfo
+                  ? formatFaultInfoDisplay(device.productId, device.faultInfo)
+                  : '—'}
+              </span>
+            </div>
+            <div>
+              <span className="fact-label">绑定用户</span>
               {device.bindings.length === 0 ? (
-                <p className="muted">无绑定（可点设备页「触发同步」补齐）</p>
+                <span className="muted">无绑定</span>
               ) : (
-                <ul>
+                <span>
                   {device.bindings.map((b) => (
-                    <li key={b.tuyaUid}>
+                    <span key={b.tuyaUid} className="binding-chip">
                       <Link to={`/users/${encodeURIComponent(b.tuyaUid)}`}>
                         {b.username || b.tuyaUid}
                       </Link>
                       {b.mobile ? ` · ${b.mobile}` : ''}
-                      {b.remark ? ` · 备注: ${b.remark}` : ''}
-                    </li>
+                    </span>
                   ))}
-                </ul>
+                </span>
               )}
             </div>
-            <div className="card">
-              <h2 style={{ marginTop: 0, fontSize: '1.05rem' }}>
-                状态集{' '}
+            <div className="fact-wide">
+              <span className="fact-label">所在城市</span>
+              <span>{device.locationText ?? '—'}</span>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="section-bar">
+              <h2>
+                状态集
                 <span className="hint">
                   {autoRefresh ? '每 5 秒自动刷新' : '已暂停自动刷新'}
                   {lastStatusAt ? ` · ${lastStatusAt.toLocaleTimeString()}` : ''}
                 </span>
               </h2>
-              <div className="row gap" style={{ marginBottom: '0.75rem' }}>
-                <label className="muted" style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+              <div className="row gap">
+                <label className="muted check-label">
                   <input
                     type="checkbox"
                     checked={autoRefresh}
                     onChange={(e) => setAutoRefresh(e.target.checked)}
                   />
-                  自动刷新属性
+                  自动刷新
                 </label>
                 <button
                   type="button"
@@ -266,21 +323,86 @@ export function DeviceDetailPage() {
                   立即刷新
                 </button>
               </div>
-              {readonly && <p className="muted">只读角色不可下发指令</p>}
-              <StatusPanel
-                key={device.deviceId}
-                deviceId={device.deviceId}
-                functions={functions}
-                statusJson={(device.statusJson as Record<string, unknown>) ?? {}}
-                disabled={readonly}
-                onSent={() => void refreshStatus(device.deviceId)}
-              />
             </div>
+            {readonly && <p className="muted">只读角色不可下发指令</p>}
+            <StatusPanel
+              key={device.deviceId}
+              deviceId={device.deviceId}
+              functions={functions}
+              statusJson={(device.statusJson as Record<string, unknown>) ?? {}}
+              disabled={readonly}
+              onSent={() => void refreshStatus(device.deviceId)}
+            />
+          </section>
+
+          <div className="device-split">
+            <section className="card">
+              <div className="section-bar">
+                <h2>固件</h2>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => deviceId && void loadEnrichment(deviceId)}
+                >
+                  刷新
+                </button>
+              </div>
+              {enrichError && <p className="warn">{enrichError}</p>}
+              {firmware.length === 0 ? (
+                <p className="hint">暂无固件信息</p>
+              ) : (
+                <ul className="fw-list">
+                  {firmware.map((row, idx) => (
+                    <li key={`${row.desc}-${row.currentVersion}-${idx}`}>
+                      <span className="fw-desc">{row.desc ?? '模块'}</span>
+                      <span className="mono fw-ver">{row.currentVersion ?? '—'}</span>
+                      {row.version ? (
+                        <span className="muted">目标 {row.version}</span>
+                      ) : (
+                        <span className="muted">无待升级版本</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <section className="card">
+              <h2>
+                云端上报日志
+                <span className="hint">近 24h · 数据上报</span>
+              </h2>
+              {cloudLogs.length === 0 ? (
+                <p className="hint">暂无云端日志</p>
+              ) : (
+                <div className="table-wrap device-log-scroll">
+                  <table className="data">
+                    <thead>
+                      <tr>
+                        <th>时间</th>
+                        <th>DP</th>
+                        <th>值</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cloudLogs.map((row, idx) => (
+                        <tr key={`${row.eventTime}-${row.code}-${idx}`} className="no-click">
+                          <td className="mono nowrap">
+                            {row.eventTime ? new Date(row.eventTime).toLocaleString() : '—'}
+                          </td>
+                          <td className="mono">{row.code}</td>
+                          <td className="mono">{JSON.stringify(row.value)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
           </div>
 
           <div className="card">
-            <h2 style={{ marginTop: 0, fontSize: '1.05rem' }}>
-              设备日志 <span className="hint">共 {eventsTotal} 条 · 保留 7 天</span>
+            <h2>
+              设备日志 <span className="hint">共 {eventsTotal} 条 · 本地消息队列</span>
             </h2>
             <div className="row gap" style={{ marginBottom: '0.55rem' }}>
               <label className="muted" style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>

@@ -2,8 +2,6 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  isAllowedProduct,
-  parseProductIds,
   TUYA_CLIENT,
   TuyaClient,
   TuyaUserDevice,
@@ -24,8 +22,6 @@ export interface CloudDeviceRow extends TuyaUserDevice {
 
 @Injectable()
 export class EndUsersService {
-  private readonly allowedProducts = parseProductIds();
-
   constructor(
     private readonly prisma: PrismaService,
     @Inject(TUYA_CLIENT) private readonly tuya: TuyaClient,
@@ -202,13 +198,10 @@ export class EndUsersService {
           });
     const inConsole = new Set(existing.map((d) => d.deviceId));
 
-    return devices.map((d) => {
-      const productId = d.productId ?? '';
-      return {
-        ...d,
-        inConsole: inConsole.has(d.deviceId),
-        allowedProduct: productId ? isAllowedProduct(productId, this.allowedProducts) : false,
-      };
-    });
+    return devices.map((d) => ({
+      ...d,
+      inConsole: inConsole.has(d.deviceId),
+      allowedProduct: true,
+    }));
   }
 }

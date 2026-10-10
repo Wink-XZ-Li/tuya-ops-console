@@ -1,20 +1,51 @@
-import { isAllowedProduct } from './tuya.client';
+import { isAllowedProduct, propertiesFromThingModel } from './tuya.client';
 import { MOCK_DEVICES, TuyaMockClient } from './tuya.mock';
 
 describe('isAllowedProduct', () => {
-  const allowed = new Set([
-    'uhmj5b0ba31zpme6',
-    'qxjzruuqz40bty7e',
-    'nohrp3vbmef7vxvx',
-    '7sylzgrdnnq2w5mo',
-  ]);
-
-  it('allows whitelisted pid', () => {
-    expect(isAllowedProduct('uhmj5b0ba31zpme6', allowed)).toBe(true);
+  it('allows any non-empty product id', () => {
+    expect(isAllowedProduct('uhmj5b0ba31zpme6')).toBe(true);
+    expect(isAllowedProduct('ckjfqtnqqystvfaa', new Set(['other']))).toBe(true);
+    expect(isAllowedProduct('not-on-old-list')).toBe(true);
   });
 
-  it('blocks unknown pid', () => {
-    expect(isAllowedProduct('other', allowed)).toBe(false);
+  it('rejects a blank product id', () => {
+    expect(isAllowedProduct('  ')).toBe(false);
+  });
+});
+
+describe('propertiesFromThingModel', () => {
+  it('keeps read-only points such as fault', () => {
+    const props = propertiesFromThingModel(
+      JSON.stringify({
+        services: [
+          {
+            properties: [
+              {
+                abilityId: 1,
+                accessMode: 'rw',
+                code: 'switch',
+                name: '开关',
+                typeSpec: { type: 'bool' },
+              },
+              {
+                abilityId: 20,
+                accessMode: 'ro',
+                code: 'fault',
+                name: '故障告警',
+                typeSpec: { type: 'bitmap', label: ['E0', 'E1'], maxlen: 2 },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(props.map((p) => p.code)).toEqual(['switch', 'fault']);
+    expect(props[1]).toMatchObject({
+      name: '故障告警',
+      mode: 'ro',
+      type: 'bitmap',
+      dpId: 20,
+    });
   });
 });
 

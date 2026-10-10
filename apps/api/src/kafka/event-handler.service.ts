@@ -9,7 +9,6 @@ import {
 } from '../devices/device-derived';
 import { MAX_DEVICES } from '../demo/device-limits';
 import { PrismaService } from '../prisma/prisma.service';
-import { isAllowedProduct } from '../tuya/tuya.client';
 import { DeviceBusMessage } from './device-bus-message';
 
 const ONLINE_CODES = new Set(['online', 'deviceOnline']);
@@ -26,14 +25,11 @@ const UNBIND_CODES = new Set(['unbindUser', 'deviceUnbindUser']);
 export class EventHandlerService {
   private readonly logger = new Logger(EventHandlerService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly allowedProducts: Set<string>,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async handle(message: DeviceBusMessage): Promise<void> {
     const productId = await this.resolveProductId(message);
-    if (!productId || !isAllowedProduct(productId, this.allowedProducts)) {
+    if (!productId) {
       return;
     }
 

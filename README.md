@@ -64,10 +64,10 @@ pnpm demo:smoke
 1. `.env` 中设置 `DEMO_MODE=live` / `VITE_DEMO_MODE=live`，填写 `TUYA_ACCESS_ID`、`TUYA_ACCESS_SECRET`；消息订阅设 `TUYA_MQ_ENV=prod`（与控制台「生产环境」一致）。用户全量同步另需 `TUYA_APP_SCHEMA`（App 渠道标识符）。
 2. **必须重启** `pnpm dev:api` 与 `pnpm dev:bridge`（根目录 `.env` 由进程启动时加载；只改前端角标不够）。
 3. 启动日志应出现：`Using TuyaLiveClient` / `Bridge started: Tuya MQ WebSocket (prod) → Redpanda`。若仍是 `TuyaMockClient` 或 `DEMO_MODE=mock`，说明环境变量未加载。
-4. 管理端点「触发同步」：会清除 `demo-*` mock 设备，再按白名单 PID 拉真机；「同步指定设备」可按 deviceId 单拉。
+4. 管理端点「触发同步」：会清除 `demo-*` mock 设备，再拉取云项目下的真机；「同步指定设备」可按 deviceId 单拉。用户详情里的关联设备也可逐台同步入库。
 5. 另开终端：`pnpm dev:bridge`（WebSocket `wss://mqe.tuyacn.com:8285/`）。测试环境用 `TUYA_MQ_ENV=test`。
-6. 真实设备需在设备上限（50）内，且 `productId` 在 `TUYA_PRODUCT_IDS` 白名单内。
-7. 若 OpenAPI 返回 `28841002`：与消息订阅无关。到 **云开发 → 云服务 → IoT Core → 延长试用**（免费基础资源包 ≠ IoT Core API 权限）。未续上前可用 bridge 事件入库；确保 `TUYA_PRODUCT_IDS` 含真实 PID。续期后可跑 `pnpm tuya:probe` 验证。
+6. 真实设备需在设备上限（50）内。不再按 `productId` 白名单过滤。
+7. 若 OpenAPI 返回 `28841002`：与消息订阅无关。到 **云开发 → 云服务 → IoT Core → 延长试用**（免费基础资源包 ≠ IoT Core API 权限）。未续上前可用 bridge 事件入库。续期后可跑 `pnpm tuya:probe` 验证。
 8. 控制台「消费者数量 0 / 离线」在 bridge 未连上前是正常的；WebSocket 消费成功时以 bridge 日志与堆积量下降为准（计数器主要反映原生 Pulsar 客户端）。
 
 ## 目录速览

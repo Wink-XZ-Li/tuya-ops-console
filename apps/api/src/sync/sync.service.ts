@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { DeviceOnlineStatus, Prisma } from '@prisma/client';
+import { presentLocationText } from '../devices/china-admin';
 import {
   deriveFaultFields,
   deriveSignalStrength,
@@ -8,19 +9,13 @@ import {
 } from '../devices/device-derived';
 import { MAX_DEVICES } from '../demo/device-limits';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  parseProductIds,
-  TUYA_CLIENT,
-  TuyaClient,
-  TuyaDeviceSummary,
-} from '../tuya/tuya.client';
+import { TUYA_CLIENT, TuyaClient, TuyaDeviceSummary } from '../tuya/tuya.client';
 
 const PAGE_SIZE = 20;
 
 @Injectable()
 export class SyncService {
   private readonly logger = new Logger(SyncService.name);
-  private readonly productIds = [...parseProductIds()];
 
   constructor(
     private readonly prisma: PrismaService,
@@ -65,53 +60,48 @@ export class SyncService {
       }
     }
 
-    for (const productId of this.productIds) {
-      if (stoppedEarly) {
-        break;
+    let lastId: string | undefined;
+    for (;;) {
+      if (stoppedEarly) break;
+
+      const { list, total, nextLastId } = await this.tuya.listDevices({
+        lastId,
+        pageSize: PAGE_SIZE,
+      });
+
+      const globalCount = await this.prisma.device.count();
+      if (!lastId && total + globalCount > MAX_DEVICES) {
+        this.logger.warn(
+          `Cloud devices (${total}) would exceed global cap (${globalCount}/${MAX_DEVICES}), truncating reconcile`,
+        );
       }
 
-      let lastId: string | undefined;
-
-      for (;;) {
-        const { list, total, nextLastId } = await this.tuya.listDevicesByProduct(productId, {
-          lastId,
-          pageSize: PAGE_SIZE,
+      for (const summary of list) {
+        const currentCount = await this.prisma.device.count();
+        const existing = await this.prisma.device.findUnique({
+          where: { deviceId: summary.deviceId },
+          select: { id: true },
         });
 
-        const globalCount = await this.prisma.device.count();
-        if (!lastId && total + globalCount > MAX_DEVICES) {
+        if (!existing && currentCount >= MAX_DEVICES) {
           this.logger.warn(
-            `Product ${productId}: ${total} devices would exceed global cap (${globalCount}/${MAX_DEVICES}), truncating reconcile`,
+            `Skipping new device ${summary.deviceId}: global count ${currentCount} >= ${MAX_DEVICES}`,
           );
+          stoppedEarly = true;
+          continue;
         }
 
-        for (const summary of list) {
-          const currentCount = await this.prisma.device.count();
-          const existing = await this.prisma.device.findUnique({
-            where: { deviceId: summary.deviceId },
-            select: { id: true },
-          });
-
-          if (!existing && currentCount >= MAX_DEVICES) {
-            this.logger.warn(
-              `Skipping new device ${summary.deviceId}: global count ${currentCount} >= ${MAX_DEVICES}`,
-            );
-            stoppedEarly = true;
-            continue;
-          }
-
-          const device = await this.upsertDevice(summary, syncedAt);
-          devicesSynced += 1;
-          await this.refreshDeviceStatusDerived(device.id, summary.deviceId, summary.productId);
-          const users = await this.tuya.getDeviceUserProfiles(summary.deviceId);
-          bindingsSynced += await this.replaceBindings(device.id, users, syncedAt);
-        }
-
-        if (list.length === 0 || list.length < PAGE_SIZE || !nextLastId || nextLastId === lastId) {
-          break;
-        }
-        lastId = nextLastId;
+        const device = await this.upsertDevice(summary, syncedAt);
+        devicesSynced += 1;
+        await this.refreshDeviceStatusDerived(device.id, summary.deviceId, summary.productId);
+        const users = await this.tuya.getDeviceUserProfiles(summary.deviceId);
+        bindingsSynced += await this.replaceBindings(device.id, users, syncedAt);
       }
+
+      if (list.length === 0 || list.length < PAGE_SIZE || !nextLastId || nextLastId === lastId) {
+        break;
+      }
+      lastId = nextLastId;
     }
 
     await this.prisma.auditLog.create({
@@ -240,6 +230,7 @@ export class SyncService {
 
     const lat = summary.lat ?? null;
     const lon = summary.lon ?? null;
+    const locationText = await this.resolveLocationText(lat, lon);
 
     return this.prisma.device.upsert({
       where: { deviceId: summary.deviceId },
@@ -249,7 +240,7 @@ export class SyncService {
         onlineStatus,
         lat,
         lon,
-        locationText: formatLocationText(lat, lon),
+        locationText,
         syncedAt,
       },
       create: {
@@ -259,10 +250,25 @@ export class SyncService {
         onlineStatus,
         lat,
         lon,
-        locationText: formatLocationText(lat, lon),
+        locationText,
         syncedAt,
       },
     });
+  }
+
+  private async resolveLocationText(
+    lat: string | null,
+    lon: string | null,
+  ): Promise<string | null> {
+    if (!lat || !lon) return formatLocationText(lat, lon);
+    let address: string | null = null;
+    try {
+      const geo = await this.tuya.reverseGeocode({ latitude: lat, longitude: lon });
+      address = geo.address?.trim() || null;
+    } catch (err) {
+      this.logger.debug(`reverseGeocode failed for ${lat},${lon}: ${String(err)}`);
+    }
+    return presentLocationText(address, lat, lon) ?? formatLocationText(lat, lon);
   }
 
   private async refreshDeviceStatusDerived(
