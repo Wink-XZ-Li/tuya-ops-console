@@ -9,6 +9,10 @@ export const PRODUCT_FAULT_BITMAP_LABELS: Record<string, Record<string, string[]
   '7sylzgrdnnq2w5mo': {
     fault: ['E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'EA', 'Eb', 'EF', 'EL'],
   },
+  // 暂用 T15 位图，待 T6-WX2 调试文件确认。fault=32 → E5。
+  '90wi2aimyqstn9qc': {
+    fault: ['E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'EA', 'Eb', 'EF', 'EL'],
+  },
 };
 
 function decodeBitmapLabels(value: number, labels: string[]): string[] {

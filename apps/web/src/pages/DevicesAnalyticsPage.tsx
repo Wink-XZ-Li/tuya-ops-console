@@ -101,7 +101,7 @@ export function DevicesAnalyticsPage() {
       <div className="page-header">
         <h1>
           设备使用分析
-          <span className="hint">在线率 · 模式 · 故障率</span>
+          <span className="hint">当前快照在线率 · 模式 · 故障率</span>
         </h1>
         <button type="button" className="btn" disabled={loading} onClick={() => void load()}>
           {loading ? '加载中…' : '刷新'}
@@ -134,7 +134,7 @@ export function DevicesAnalyticsPage() {
           <div className="kpi-grid">
             <KpiCard label="纳管设备" value={data.live.total} />
             <KpiCard
-              label="在线率"
+              label="当前快照在线率"
               value={`${(data.live.onlineRate * 100).toFixed(1)}%`}
               sub={`在线 ${formatNumber(data.live.online)} / 离线 ${formatNumber(data.live.offline)}`}
             />

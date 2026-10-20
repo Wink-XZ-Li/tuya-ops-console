@@ -29,6 +29,8 @@ type UsersInsights = {
   };
   local: {
     endUserTotal: number;
+    boundUserCount: number;
+    boundUserRate: number | null;
     bindingDistribution: { zero: number; one: number; two: number; threePlus: number };
     countryCodeDistribution: Array<{ countryCode: string; count: number }>;
   };
@@ -91,7 +93,7 @@ export function UsersAnalyticsPage() {
       <div className="page-header">
         <h1>
           用户分析
-          <span className="hint">活跃 · 地域 · 绑定数分布</span>
+          <span className="hint">涂鸦数据星象仪 · 本地绑定</span>
         </h1>
         <button type="button" className="btn" disabled={loading} onClick={() => void load()}>
           {loading ? '加载中…' : '刷新'}
@@ -127,19 +129,38 @@ export function UsersAnalyticsPage() {
       {data && (
         <>
           <div className="kpi-grid">
-            <KpiCard label="累计注册（星象仪）" value={data.star.kpis.registerTotal} />
-            <KpiCard label="区间新增注册" value={data.star.kpis.registerNew} />
+            <KpiCard
+              label="累计注册"
+              value={data.star.kpis.registerTotal}
+              sub="来源：涂鸦数据星象仪"
+            />
+            <KpiCard
+              label="区间新增注册"
+              value={data.star.kpis.registerNew}
+              sub="来源：涂鸦数据星象仪"
+            />
             <KpiCard
               label="区间控制次数"
               value={data.star.kpis.controlTotal}
-              sub={`控制用户 ${formatNumber(data.star.kpis.controlUsers)}`}
+              sub={`来源：涂鸦数据星象仪 · 控制用户 ${formatNumber(data.star.kpis.controlUsers)}`}
             />
-            <KpiCard label="本地已同步用户" value={data.local.endUserTotal} />
+            <KpiCard
+              label="有绑定的用户占比"
+              value={
+                data.local.boundUserRate == null
+                  ? '—'
+                  : `${(data.local.boundUserRate * 100).toFixed(1)}%`
+              }
+              sub={`有绑定 ${formatNumber(data.local.boundUserCount)} / 本地用户 ${formatNumber(data.local.endUserTotal)}`}
+            />
           </div>
 
           <div className="dash-charts">
             <section className="card chart-card">
-              <h2>每日新增注册</h2>
+              <h2>
+                每日新增注册
+                <span className="hint">来源：涂鸦数据星象仪</span>
+              </h2>
               <MiniSparkline
                 values={data.star.register.map((r) => ({
                   day: r.dt,
@@ -149,7 +170,10 @@ export function UsersAnalyticsPage() {
               />
             </section>
             <section className="card chart-card">
-              <h2>每日控制次数</h2>
+              <h2>
+                每日控制次数
+                <span className="hint">来源：涂鸦数据星象仪</span>
+              </h2>
               <MiniSparkline
                 values={data.star.control.map((r) => ({ day: r.dt, value: r.controlNum }))}
                 color="#0d7a4f"
@@ -162,7 +186,7 @@ export function UsersAnalyticsPage() {
           <section className="card">
             <h2>
               激活地区分布
-              <span className="hint">date_type={data.star.locations.dateType}</span>
+              <span className="hint">来源：涂鸦数据星象仪 · date_type={data.star.locations.dateType}</span>
             </h2>
             <BarTable
               nameHeader="地区"

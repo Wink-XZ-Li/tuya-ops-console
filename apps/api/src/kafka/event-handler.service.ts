@@ -1,12 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AlertStatus, DeviceOnlineStatus, Prisma } from '@prisma/client';
+import { faultAlertActiveKey, offlineAlertActiveKey } from '../alerts/backfill-fault-alerts';
 import {
   asRecord,
-  collectFaultEntries,
+  decodeBitmapLabels,
   deriveFaultFields,
   deriveSignalStrength,
   extractStatusUpdates,
 } from '../devices/device-derived';
+import { PRODUCT_FAULT_BITMAP_LABELS } from '../devices/product-fault-schemas';
 import { MAX_DEVICES } from '../demo/device-limits';
 import { PrismaService } from '../prisma/prisma.service';
 import { DeviceBusMessage } from './device-bus-message';
@@ -108,13 +110,23 @@ export class EventHandlerService {
       where: { id: deviceId },
       data: { onlineStatus: DeviceOnlineStatus.online },
     });
+    const now = new Date();
     await this.prisma.alert.updateMany({
       where: {
         deviceId,
-        source: 'local_offline',
         status: { not: AlertStatus.closed },
+        OR: [
+          { source: 'local_offline' },
+          { category: 'connectivity', faultCode: 'offline' },
+          { activeKey: offlineAlertActiveKey(deviceId) },
+        ],
       },
-      data: { status: AlertStatus.closed, closedAt: new Date() },
+      data: {
+        status: AlertStatus.closed,
+        closedAt: now,
+        closedReason: 'online',
+        activeKey: null,
+      },
     });
   }
 
@@ -138,21 +150,21 @@ export class EventHandlerService {
       where: { id: deviceId },
       select: { statusJson: true, productId: true },
     });
-    const merged = {
-      ...asRecord(current?.statusJson),
-      ...updates,
-    };
+    const prev = asRecord(current?.statusJson);
+    const merged = { ...prev, ...updates };
+    const now = new Date();
 
-    const openAlerts = await this.prisma.alert.findMany({
-      where: { deviceId, status: { not: AlertStatus.closed } },
-      select: { title: true },
-      take: 5,
+    await this.reconcileFaultAlerts(deviceId, current?.productId, prev, merged, updates, now);
+
+    const openFaultAlerts = await this.prisma.alert.findMany({
+      where: { deviceId, status: { not: AlertStatus.closed }, category: 'fault' },
+      select: { faultCode: true, title: true },
+      take: 20,
     });
-    const fault = deriveFaultFields(
-      merged,
-      openAlerts.map((a) => a.title),
-      current?.productId,
-    );
+    const fault = deriveFaultFields(merged, {
+      productId: current?.productId,
+      openFaultAlerts,
+    });
 
     await this.prisma.device.update({
       where: { id: deviceId },
@@ -163,17 +175,104 @@ export class EventHandlerService {
         signalStrength: deriveSignalStrength(merged),
       },
     });
+  }
 
-    if (collectFaultEntries(updates).length > 0) {
-      await this.prisma.alert.create({
+  private async reconcileFaultAlerts(
+    deviceId: string,
+    productId: string | null | undefined,
+    prev: Record<string, unknown>,
+    next: Record<string, unknown>,
+    updates: Record<string, unknown>,
+    now: Date,
+  ): Promise<void> {
+    const schemas = productId ? PRODUCT_FAULT_BITMAP_LABELS[productId] : undefined;
+    if (!schemas) return;
+
+    for (const [dpCode, labels] of Object.entries(schemas)) {
+      const prevLabels = decodeBitmapLabels(prev[dpCode], labels);
+      const nextLabels = decodeBitmapLabels(next[dpCode], labels);
+      const prevSet = new Set(prevLabels);
+      const nextSet = new Set(nextLabels);
+      const touched = Object.prototype.hasOwnProperty.call(updates, dpCode);
+
+      for (const label of nextLabels) {
+        if (!prevSet.has(label) || touched) {
+          await this.upsertActiveFaultAlert(deviceId, dpCode, label, next[dpCode], now);
+        }
+      }
+      for (const label of prevLabels) {
+        if (!nextSet.has(label)) {
+          await this.clearFaultAlert(deviceId, dpCode, label, now);
+        }
+      }
+    }
+  }
+
+  private async upsertActiveFaultAlert(
+    deviceId: string,
+    dpCode: string,
+    label: string,
+    value: unknown,
+    now: Date,
+  ): Promise<void> {
+    const activeKey = faultAlertActiveKey(deviceId, dpCode, label);
+    const existing = await this.prisma.alert.findUnique({ where: { activeKey } });
+    if (existing) {
+      await this.prisma.alert.update({
+        where: { id: existing.id },
         data: {
-          deviceId,
-          source: 'device',
-          title: '设备上报故障/告警',
-          detail: { properties: updates } as Prisma.InputJsonValue,
+          occurrenceCount: { increment: 1 },
+          lastSeenAt: now,
+        },
+      });
+      return;
+    }
+
+    const data = {
+      deviceId,
+      source: 'device_fault',
+      category: 'fault',
+      faultCode: label,
+      title: `故障 ${label}`,
+      detail: { dpCode, label, value } as Prisma.InputJsonValue,
+      conditionStartedAt: now,
+      occurrenceCount: 1,
+      lastSeenAt: now,
+      activeKey,
+      fingerprint: activeKey,
+    };
+    try {
+      await this.prisma.alert.create({ data });
+    } catch (err) {
+      if (!isUniqueConflict(err)) throw err;
+      await this.prisma.alert.update({
+        where: { activeKey },
+        data: {
+          occurrenceCount: { increment: 1 },
+          lastSeenAt: now,
         },
       });
     }
+  }
+
+  private async clearFaultAlert(
+    deviceId: string,
+    dpCode: string,
+    label: string,
+    now: Date,
+  ): Promise<void> {
+    await this.prisma.alert.updateMany({
+      where: {
+        activeKey: faultAlertActiveKey(deviceId, dpCode, label),
+        status: { not: AlertStatus.closed },
+      },
+      data: {
+        status: AlertStatus.closed,
+        closedAt: now,
+        closedReason: 'auto_clear',
+        activeKey: null,
+      },
+    });
   }
 
   private async handleBindUser(
@@ -221,4 +320,8 @@ export class EventHandlerService {
       where: { deviceId, endUserId: endUser.id },
     });
   }
+}
+
+function isUniqueConflict(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
 }

@@ -1,10 +1,22 @@
-import { extractModeLabel, faultCodeOf } from './rollup.job';
+import { extractModeLabel, faultDurationMinutes, rollupFaultCode } from './rollup.job';
 
-describe('faultCodeOf', () => {
-  it('prefers source then title', () => {
-    expect(faultCodeOf('local_offline', '设备长时间离线')).toBe('local_offline');
-    expect(faultCodeOf('', 'sensor error')).toBe('sensor error');
-    expect(faultCodeOf('  ', '  ')).toBe('unknown');
+describe('rollupFaultCode', () => {
+  it('uses faultCode and drops connectivity and offline', () => {
+    expect(rollupFaultCode({ faultCode: 'E1', category: 'fault' })).toBe('E1');
+    expect(rollupFaultCode({ faultCode: 'offline', category: 'connectivity' })).toBeNull();
+    expect(rollupFaultCode({ faultCode: 'E3', category: 'connectivity' })).toBeNull();
+    expect(rollupFaultCode({ faultCode: null, category: 'fault' })).toBeNull();
+    expect(rollupFaultCode({ faultCode: '  ', category: 'fault' })).toBeNull();
+    expect(rollupFaultCode({ faultCode: 'unknown', category: 'fault' })).toBeNull();
+  });
+
+  it('measures duration from conditionStartedAt', () => {
+    const minutes = faultDurationMinutes({
+      openedAt: new Date('2026-10-10T00:00:00Z'),
+      conditionStartedAt: new Date('2026-10-10T00:10:00Z'),
+      closedAt: new Date('2026-10-10T00:40:00Z'),
+    });
+    expect(minutes).toBe(30);
   });
 });
 

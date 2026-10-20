@@ -280,15 +280,14 @@ export class SyncService {
       const pairs = await this.tuya.getDeviceStatus(tuyaDeviceId);
       const status = statusFromPairs(pairs);
       const alerts = await this.prisma.alert.findMany({
-        where: { deviceId: internalId, status: { not: 'closed' } },
-        select: { title: true },
-        take: 5,
+        where: { deviceId: internalId, status: { not: 'closed' }, category: 'fault' },
+        select: { faultCode: true, title: true },
+        take: 20,
       });
-      const fault = deriveFaultFields(
-        status,
-        alerts.map((a) => a.title),
+      const fault = deriveFaultFields(status, {
         productId,
-      );
+        openFaultAlerts: alerts,
+      });
       await this.prisma.device.update({
         where: { id: internalId },
         data: {

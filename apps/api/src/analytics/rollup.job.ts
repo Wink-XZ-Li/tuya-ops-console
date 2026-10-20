@@ -165,8 +165,8 @@ export class RollupJob implements OnModuleInit, OnModuleDestroy {
       this.prisma.alert.findMany({
         where: { openedAt: { gte: start, lt: end } },
         select: {
-          source: true,
-          title: true,
+          faultCode: true,
+          category: true,
           device: { select: { productId: true } },
         },
       }),
@@ -176,10 +176,11 @@ export class RollupJob implements OnModuleInit, OnModuleDestroy {
           closedAt: { gte: start, lt: end },
         },
         select: {
-          source: true,
-          title: true,
+          faultCode: true,
+          category: true,
           openedAt: true,
           closedAt: true,
+          conditionStartedAt: true,
           device: { select: { productId: true } },
         },
       }),
@@ -189,8 +190,8 @@ export class RollupJob implements OnModuleInit, OnModuleDestroy {
           openedAt: { lt: end },
         },
         select: {
-          source: true,
-          title: true,
+          faultCode: true,
+          category: true,
           device: { select: { productId: true } },
         },
       }),
@@ -217,76 +218,96 @@ export class RollupJob implements OnModuleInit, OnModuleDestroy {
       return b;
     };
 
+    await this.prisma.dailyFaultStat.deleteMany({ where: { day: dayKey } });
+
     for (const row of opened) {
-      const faultCode = faultCodeOf(row.source, row.title);
+      const faultCode = rollupFaultCode(row);
+      if (!faultCode) continue;
       const productId = row.device.productId;
       ensure(productId, faultCode).newCount += 1;
       ensure(FLEET_PRODUCT_ID, faultCode).newCount += 1;
     }
 
     for (const row of closed) {
-      const faultCode = faultCodeOf(row.source, row.title);
+      const faultCode = rollupFaultCode(row);
+      const closedAt = row.closedAt;
+      if (!faultCode || !closedAt) continue;
       const productId = row.device.productId;
       for (const pid of [productId, FLEET_PRODUCT_ID]) {
         const b = ensure(pid, faultCode);
         b.closedCount += 1;
-        if (row.closedAt) {
-          const minutes = Math.max(
-            0,
-            Math.round((row.closedAt.getTime() - row.openedAt.getTime()) / 60000),
-          );
-          b.mttrSum += minutes;
-          b.mttrN += 1;
-        }
+        b.mttrSum += faultDurationMinutes({
+          openedAt: row.openedAt,
+          closedAt,
+          conditionStartedAt: row.conditionStartedAt,
+        });
+        b.mttrN += 1;
       }
     }
 
     for (const row of stillOpen) {
-      const faultCode = faultCodeOf(row.source, row.title);
+      const faultCode = rollupFaultCode(row);
+      if (!faultCode) continue;
       ensure(row.device.productId, faultCode).openCount += 1;
       ensure(FLEET_PRODUCT_ID, faultCode).openCount += 1;
     }
 
-    const upserts: Array<Promise<unknown>> = [];
     for (const [composite, bucket] of buckets) {
       const sep = composite.indexOf('\0');
       const productId = composite.slice(0, sep);
       const faultCode = composite.slice(sep + 1);
+      if (
+        !faultCode ||
+        faultCode === 'unknown' ||
+        (bucket.newCount === 0 && bucket.openCount === 0 && bucket.closedCount === 0)
+      ) {
+        continue;
+      }
       const mttrMinutesAvg =
         bucket.mttrN > 0 ? Math.round(bucket.mttrSum / bucket.mttrN) : null;
 
-      upserts.push(
-        this.prisma.dailyFaultStat.upsert({
-          where: {
-            day_productId_faultCode: { day: dayKey, productId, faultCode },
-          },
-          create: {
-            day: dayKey,
-            productId,
-            faultCode,
-            openCount: bucket.openCount,
-            newCount: bucket.newCount,
-            closedCount: bucket.closedCount,
-            mttrMinutesAvg,
-          },
-          update: {
-            openCount: bucket.openCount,
-            newCount: bucket.newCount,
-            closedCount: bucket.closedCount,
-            mttrMinutesAvg,
-          },
-        }),
-      );
+      await this.prisma.dailyFaultStat.upsert({
+        where: {
+          day_productId_faultCode: { day: dayKey, productId, faultCode },
+        },
+        create: {
+          day: dayKey,
+          productId,
+          faultCode,
+          openCount: bucket.openCount,
+          newCount: bucket.newCount,
+          closedCount: bucket.closedCount,
+          mttrMinutesAvg,
+        },
+        update: {
+          openCount: bucket.openCount,
+          newCount: bucket.newCount,
+          closedCount: bucket.closedCount,
+          mttrMinutesAvg,
+        },
+      });
     }
-    await Promise.all(upserts);
   }
 }
 
-export function faultCodeOf(source: string, title: string): string {
-  const s = source?.trim();
-  if (s) return s;
-  const t = title?.trim();
-  return t || 'unknown';
+/** Fault-stat key. Connectivity, offline, blank, and `unknown` are omitted so they are not written. */
+export function rollupFaultCode(row: {
+  faultCode?: string | null;
+  category?: string | null;
+}): string | null {
+  if (row.category === 'connectivity' || row.faultCode === 'offline') return null;
+  const code = row.faultCode?.trim();
+  if (!code || code === 'unknown') return null;
+  return code;
+}
+
+export function faultDurationMinutes(row: {
+  openedAt: Date;
+  closedAt: Date;
+  conditionStartedAt?: Date | null;
+}): number {
+  const start = row.conditionStartedAt ?? row.openedAt;
+  return Math.max(0, Math.round((row.closedAt.getTime() - start.getTime()) / 60000));
 }
 
 export function extractModeLabel(statusJson: unknown): string | null {

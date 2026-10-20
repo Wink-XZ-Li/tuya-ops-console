@@ -1,6 +1,7 @@
 import { AlertStatus, DeviceOnlineStatus } from '@prisma/client';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { offlineAlertActiveKey } from './backfill-fault-alerts';
 
 const OFFLINE_RULE_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -37,22 +38,35 @@ export class OfflineRuleJob implements OnModuleInit, OnModuleDestroy {
     });
 
     for (const device of devices) {
+      const activeKey = offlineAlertActiveKey(device.id);
       const existing = await this.prisma.alert.findFirst({
         where: {
           deviceId: device.id,
-          source: 'local_offline',
           status: { not: AlertStatus.closed },
+          OR: [
+            { activeKey },
+            { category: 'connectivity', faultCode: 'offline' },
+            { source: 'local_offline' },
+          ],
         },
       });
       if (existing) {
         continue;
       }
 
+      const now = new Date();
       await this.prisma.alert.create({
         data: {
           deviceId: device.id,
           source: 'local_offline',
+          category: 'connectivity',
+          faultCode: 'offline',
           title: '设备长时间离线',
+          fingerprint: activeKey,
+          activeKey,
+          conditionStartedAt: device.lastSeenAt ?? now,
+          occurrenceCount: 1,
+          lastSeenAt: now,
         },
       });
       this.logger.log(`Opened local_offline alert for device ${device.deviceId}`);

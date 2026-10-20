@@ -8,7 +8,9 @@
     "test": "jest",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "prisma:seed": "ts-node prisma/seed.ts",
+    "backfill:fault-alerts": "ts-node prisma/backfill-fault-alerts.ts",
+    "demo:fault-alerts": "ts-node prisma/seed-demo-fault-alerts.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

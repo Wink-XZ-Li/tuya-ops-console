@@ -122,15 +122,14 @@ export class DevicesService {
       ...fromApi,
     };
     const alerts = await this.prisma.alert.findMany({
-      where: { deviceId: device.id, status: { not: 'closed' } },
-      select: { title: true },
-      take: 5,
+      where: { deviceId: device.id, status: { not: 'closed' }, category: 'fault' },
+      select: { faultCode: true, title: true },
+      take: 20,
     });
-    const fault = deriveFaultFields(
-      status,
-      alerts.map((a) => a.title),
-      device.productId,
-    );
+    const fault = deriveFaultFields(status, {
+      productId: device.productId,
+      openFaultAlerts: alerts,
+    });
 
     await this.prisma.device.update({
       where: { id: device.id },

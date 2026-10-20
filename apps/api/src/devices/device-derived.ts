@@ -108,11 +108,20 @@ export function formatFaultEntry(
   return `${raw}｜${names.join('+')}`;
 }
 
+export type OpenFaultAlert = { faultCode: string | null; title: string };
+
+export type DeriveFaultOptions = {
+  productId?: string | null;
+  /** Active alerts with category=fault only. Connectivity alerts must not be passed in. */
+  openFaultAlerts?: OpenFaultAlert[];
+};
+
 export function deriveFaultFields(
   status: Record<string, unknown>,
-  openAlertTitles: string[] = [],
-  productId?: string | null,
+  options: DeriveFaultOptions = {},
 ): { faultStatus: DeviceFaultStatus; faultInfo: string | null } {
+  const productId = options.productId;
+  const openFaultAlerts = options.openFaultAlerts ?? [];
   const faults = collectFaultEntries(status);
   if (faults.length > 0) {
     return {
@@ -124,13 +133,16 @@ export function deriveFaultFields(
         .slice(0, 512),
     };
   }
-  if (openAlertTitles.length > 0) {
+  if (openFaultAlerts.length > 0) {
+    const labels = openFaultAlerts
+      .map((alert) => alert.faultCode?.trim() || alert.title)
+      .filter((label) => label.length > 0);
     return {
       faultStatus: DeviceFaultStatus.fault,
-      faultInfo: openAlertTitles.slice(0, 3).join('; ').slice(0, 512),
+      faultInfo: labels.slice(0, 3).join('; ').slice(0, 512) || null,
     };
   }
-  if (Object.keys(status).length === 0 && openAlertTitles.length === 0) {
+  if (Object.keys(status).length === 0) {
     return { faultStatus: DeviceFaultStatus.unknown, faultInfo: null };
   }
   return { faultStatus: DeviceFaultStatus.normal, faultInfo: null };

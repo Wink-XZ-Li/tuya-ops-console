@@ -13,6 +13,7 @@ import {
   useAnalyticsRange,
 } from '../components/AnalyticsFilters';
 import { formatProductLabel } from '../constants/product-names';
+import { formatFaultDuration } from '../utils/format-fault-duration';
 
 type FaultsAnalytics = {
   startDay: string;
@@ -22,6 +23,11 @@ type FaultsAnalytics = {
     faultDevicesNow: number;
     openAlerts: number;
     avgMttrMinutes: number | null;
+    avgDurationMinutes: number | null;
+    qualityFaultDevices: number;
+    inServiceDevices: number;
+    qualityFaultRate: number | null;
+    pendingDeviceCount: number;
     surveyFault: unknown;
   };
   dailyTrend: Array<{
@@ -95,7 +101,7 @@ export function FaultsAnalyticsPage() {
       <div className="page-header">
         <h1>
           故障分析
-          <span className="hint">故障率 · 趋势 · 关联</span>
+          <span className="hint">质量故障率 · 待处理 · 持续时长</span>
         </h1>
         <div className="row gap">
           <Link className="btn" to="/alerts">
@@ -136,12 +142,22 @@ export function FaultsAnalyticsPage() {
       {data && (
         <>
           <div className="kpi-grid">
-            <KpiCard label="当前故障设备" value={data.kpis.faultDevicesNow} />
-            <KpiCard label="未关闭告警" value={data.kpis.openAlerts} />
             <KpiCard
-              label="平均 MTTR"
+              label="质量故障率"
               value={
-                data.kpis.avgMttrMinutes == null ? '—' : `${formatNumber(data.kpis.avgMttrMinutes)} 分`
+                data.kpis.qualityFaultRate == null
+                  ? '—'
+                  : `${(data.kpis.qualityFaultRate * 100).toFixed(1)}%`
+              }
+              sub={`故障设备 ${formatNumber(data.kpis.qualityFaultDevices)} / 在网 ${formatNumber(data.kpis.inServiceDevices)}`}
+            />
+            <KpiCard label="待处理台数" value={data.kpis.pendingDeviceCount} />
+            <KpiCard
+              label="平均持续时长"
+              value={
+                data.kpis.avgDurationMinutes == null
+                  ? '—'
+                  : formatFaultDuration(data.kpis.avgDurationMinutes)
               }
             />
             <KpiCard
@@ -171,7 +187,7 @@ export function FaultsAnalyticsPage() {
           </div>
 
           <section className="card">
-            <h2>故障码 / 标题分布</h2>
+            <h2>故障码分布</h2>
             <BarTable
               nameHeader="故障"
               rows={data.faultCodeHistogram.map((r) => ({

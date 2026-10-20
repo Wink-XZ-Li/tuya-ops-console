@@ -187,7 +187,15 @@ export class AnalyticsService {
       ? { device: { productId } }
       : {};
 
-    const [faultDevicesNow, openAlerts, closedWithMttr, daily, devicesForCorr, surveyPack] =
+    const rangeStart = ymdToDate(startDay);
+    const rangeEndExclusive = ymdToDate(endDay);
+    rangeEndExclusive.setDate(rangeEndExclusive.getDate() + 1);
+    const faultAlertWhere: Prisma.AlertWhereInput = {
+      ...alertWhere,
+      category: 'fault',
+    };
+
+    const [faultDevicesNow, openAlerts, closedWithDuration, daily, devicesForCorr, surveyPack, inServiceDevices, qualityFaultRows, pendingFaultRows] =
       await Promise.all([
         this.prisma.device.count({
           where: { ...deviceWhere, faultStatus: DeviceFaultStatus.fault },
@@ -197,11 +205,11 @@ export class AnalyticsService {
         }),
         this.prisma.alert.findMany({
           where: {
-            ...alertWhere,
+            ...faultAlertWhere,
             status: AlertStatus.closed,
-            closedAt: { not: null },
+            closedAt: { gte: rangeStart, lt: rangeEndExclusive },
           },
-          select: { openedAt: true, closedAt: true },
+          select: { openedAt: true, closedAt: true, conditionStartedAt: true },
           take: 5000,
         }),
         this.prisma.dailyFaultStat.findMany({
@@ -216,16 +224,41 @@ export class AnalyticsService {
           select: { productId: true, faultInfo: true, locationText: true, lat: true, lon: true },
         }),
         this.getFaultSurvey(productId),
+        this.prisma.device.count({ where: deviceWhere }),
+        this.prisma.alert.findMany({
+          where: {
+            ...faultAlertWhere,
+            openedAt: { lt: rangeEndExclusive },
+            OR: [{ closedAt: null }, { closedAt: { gte: rangeStart } }],
+          },
+          select: { deviceId: true },
+          distinct: ['deviceId'],
+        }),
+        this.prisma.alert.findMany({
+          where: {
+            ...faultAlertWhere,
+            status: { not: AlertStatus.closed },
+          },
+          select: { deviceId: true },
+          distinct: ['deviceId'],
+        }),
       ]);
 
-    const mttrSamples = closedWithMttr
+    const durationSamples = closedWithDuration
       .filter((a) => a.closedAt)
-      .map((a) =>
-        Math.max(0, Math.round((a.closedAt!.getTime() - a.openedAt.getTime()) / 60000)),
-      );
-    const avgMttrMinutes =
-      mttrSamples.length > 0
-        ? Math.round(mttrSamples.reduce((s, n) => s + n, 0) / mttrSamples.length)
+      .map((a) => {
+        const start = a.conditionStartedAt ?? a.openedAt;
+        return Math.max(0, Math.round((a.closedAt!.getTime() - start.getTime()) / 60000));
+      });
+    const avgDurationMinutes =
+      durationSamples.length > 0
+        ? Math.round(durationSamples.reduce((s, n) => s + n, 0) / durationSamples.length)
+        : null;
+    const qualityFaultDevices = qualityFaultRows.length;
+    const pendingDeviceCount = pendingFaultRows.length;
+    const qualityFaultRate =
+      inServiceDevices > 0
+        ? Number((qualityFaultDevices / inServiceDevices).toFixed(4))
         : null;
 
     const trendByDay = new Map<
@@ -298,17 +331,23 @@ export class AnalyticsService {
       kpis: {
         faultDevicesNow,
         openAlerts,
-        avgMttrMinutes,
+        avgMttrMinutes: avgDurationMinutes,
+        avgDurationMinutes,
+        qualityFaultDevices,
+        inServiceDevices,
+        qualityFaultRate,
+        pendingDeviceCount,
         surveyFault:
           surveyPack.survey?.deviceFault ?? surveyPack.live?.deviceFault ?? null,
       },
       dailyTrend: [...trendByDay.values()],
       faultCodeHistogram: [...histogramMap.entries()]
         .map(([faultCode, count]) => ({ faultCode, count }))
+        .filter((row) => row.count > 0)
         .sort((a, b) => b.count - a.count),
-      correlation: [...correlationMap.values()].sort(
-        (a, b) => b.newCount + b.liveFaultDevices - (a.newCount + a.liveFaultDevices),
-      ),
+      correlation: [...correlationMap.values()]
+        .filter((row) => row.newCount > 0 || row.liveFaultDevices > 0)
+        .sort((a, b) => b.newCount + b.liveFaultDevices - (a.newCount + a.liveFaultDevices)),
       byLocation: [...locationMap.entries()]
         .map(([location, count]) => ({ location, count }))
         .sort((a, b) => b.count - a.count),
@@ -508,6 +547,16 @@ export class AnalyticsService {
       },
       local: {
         endUserTotal: endUsers.length,
+        boundUserCount: bindingBuckets.one + bindingBuckets.two + bindingBuckets.threePlus,
+        boundUserRate:
+          endUsers.length > 0
+            ? Number(
+                (
+                  (bindingBuckets.one + bindingBuckets.two + bindingBuckets.threePlus) /
+                  endUsers.length
+                ).toFixed(4),
+              )
+            : null,
         bindingDistribution: bindingBuckets,
         countryCodeDistribution: [...countryMap.entries()]
           .map(([countryCode, count]) => ({ countryCode, count }))
@@ -728,9 +777,18 @@ function buildReportCsv(result: Record<string, unknown>, sections: string[]): st
       }
     | undefined;
   if (faults?.kpis) {
-    for (const [k, v] of Object.entries(faults.kpis)) {
-      lines.push(`faults.kpi,${csvEscape(k)},${csvEscape(String(v ?? ''))}`);
-    }
+    const kpis = faults.kpis;
+    lines.push(
+      `faults.kpi,质量故障率,${csvEscape(String(kpis.qualityFaultRate ?? ''))}`,
+    );
+    lines.push(
+      `faults.kpi,质量故障设备数,${csvEscape(String(kpis.qualityFaultDevices ?? ''))}`,
+    );
+    lines.push(`faults.kpi,在网设备数,${csvEscape(String(kpis.inServiceDevices ?? ''))}`);
+    lines.push(`faults.kpi,待处理台数,${csvEscape(String(kpis.pendingDeviceCount ?? ''))}`);
+    lines.push(
+      `faults.kpi,平均持续时长分钟,${csvEscape(String(kpis.avgDurationMinutes ?? ''))}`,
+    );
   }
   if (faults?.faultCodeHistogram) {
     for (const row of faults.faultCodeHistogram) {
@@ -753,10 +811,13 @@ function buildReportCsv(result: Record<string, unknown>, sections: string[]): st
       }
     | undefined;
   if (devices?.live) {
-    for (const [k, v] of Object.entries(devices.live)) {
-      if (k === 'byProduct' || k === 'modeDistribution') continue;
-      lines.push(`devices.live,${csvEscape(k)},${csvEscape(String(v ?? ''))}`);
-    }
+    lines.push(
+      `devices.live,当前快照在线率,${csvEscape(String(devices.live.onlineRate ?? ''))}`,
+    );
+    lines.push(`devices.live,纳管设备,${csvEscape(String(devices.live.total ?? ''))}`);
+    lines.push(`devices.live,在线,${csvEscape(String(devices.live.online ?? ''))}`);
+    lines.push(`devices.live,离线,${csvEscape(String(devices.live.offline ?? ''))}`);
+    lines.push(`devices.live,故障设备,${csvEscape(String(devices.live.fault ?? ''))}`);
     for (const row of devices.live.modeDistribution ?? []) {
       lines.push(`devices.mode,${csvEscape(row.mode)},${csvEscape(String(row.count))}`);
     }
@@ -766,6 +827,8 @@ function buildReportCsv(result: Record<string, unknown>, sections: string[]): st
     | {
         local?: {
           endUserTotal?: number;
+          boundUserCount?: number;
+          boundUserRate?: number | null;
           bindingDistribution?: Record<string, number>;
           countryCodeDistribution?: Array<{ countryCode: string; count: number }>;
         };
@@ -773,13 +836,22 @@ function buildReportCsv(result: Record<string, unknown>, sections: string[]): st
       }
     | undefined;
   if (users?.star?.kpis) {
-    for (const [k, v] of Object.entries(users.star.kpis)) {
-      lines.push(`users.star,${csvEscape(k)},${csvEscape(String(v ?? ''))}`);
-    }
+    const star = users.star.kpis;
+    lines.push(`users.star,来源,涂鸦数据星象仪`);
+    lines.push(`users.star,累计注册,${csvEscape(String(star.registerTotal ?? ''))}`);
+    lines.push(`users.star,区间新增注册,${csvEscape(String(star.registerNew ?? ''))}`);
+    lines.push(`users.star,区间控制次数,${csvEscape(String(star.controlTotal ?? ''))}`);
+    lines.push(`users.star,控制用户,${csvEscape(String(star.controlUsers ?? ''))}`);
   }
   if (users?.local) {
     lines.push(
-      `users.local,endUserTotal,${csvEscape(String(users.local.endUserTotal ?? 0))}`,
+      `users.local,本地已同步用户,${csvEscape(String(users.local.endUserTotal ?? 0))}`,
+    );
+    lines.push(
+      `users.local,有绑定的用户数,${csvEscape(String(users.local.boundUserCount ?? ''))}`,
+    );
+    lines.push(
+      `users.local,有绑定的用户占比,${csvEscape(String(users.local.boundUserRate ?? ''))}`,
     );
     for (const [k, v] of Object.entries(users.local.bindingDistribution ?? {})) {
       lines.push(`users.bindings,${csvEscape(k)},${csvEscape(String(v))}`);

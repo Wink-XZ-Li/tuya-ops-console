@@ -149,18 +149,47 @@ model AuditLog {
 }
 
 model Alert {
-  id         String      @id @default(cuid())
-  deviceId   String
-  source     String
-  title      String
-  detail     Json?
-  status     AlertStatus @default(open)
-  openedAt   DateTime    @default(now())
-  closedAt   DateTime?
-  device     Device      @relation(fields: [deviceId], references: [id])
+  id                 String      @id @default(cuid())
+  deviceId           String
+  source             String
+  title              String
+  detail             Json?
+  status             AlertStatus @default(open)
+  openedAt           DateTime    @default(now())
+  closedAt           DateTime?
+  category           String?     @db.VarChar(32)
+  faultCode          String?     @db.VarChar(64)
+  fingerprint        String?     @db.VarChar(191)
+  /// Non-null only while open/acked. Multiple NULLs are allowed; never store ''.
+  activeKey          String?     @unique @db.VarChar(191)
+  conditionStartedAt DateTime?
+  occurrenceCount    Int         @default(1)
+  lastSeenAt         DateTime?
+  closedReason       String?     @db.VarChar(32)
+  device             Device      @relation(fields: [deviceId], references: [id])
 
   @@index([status, openedAt])
   @@index([deviceId, status])
+  @@index([deviceId, faultCode, status])
+  @@index([category, status])
+}
+
+/// Product fault-code dictionary. Business text stays empty until after the review meeting.
+model FaultCodeDefinition {
+  id                 String   @id @default(cuid())
+  productId          String   @db.VarChar(64)
+  code               String   @db.VarChar(64)
+  label              String   @db.VarChar(64)
+  sortOrder          Int      @default(0)
+  symptom            String?  @db.VarChar(256)
+  cause              String?  @db.VarChar(256)
+  suggestedAction    String?  @db.VarChar(256)
+  countInQualityRate Boolean  @default(true)
+  notifyAftersales   Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([productId, code, label])
 }
 
 model DpAlias {
