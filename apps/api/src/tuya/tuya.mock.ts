@@ -68,6 +68,11 @@ export class TuyaMockClient implements TuyaClient {
     return { ...device };
   }
 
+  async getDeviceSignal(deviceId: string): Promise<string | null> {
+    if (deviceId === 'demo-001') return '-40 dBm · Excellent';
+    return null;
+  }
+
   async getDeviceStatus(deviceId: string): Promise<Array<{ code: string; value: unknown }>> {
     return MOCK_STATUS[deviceId] ?? [{ code: 'switch', value: false }];
   }

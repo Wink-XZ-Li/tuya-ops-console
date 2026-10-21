@@ -171,7 +171,7 @@ export function FaultsAnalyticsPage() {
               <h2>每日新发告警</h2>
               <MiniSparkline
                 values={data.dailyTrend.map((r) => ({ day: r.day, value: r.newCount }))}
-                color="#c62828"
+                color="#c4242a"
                 valueLabel="新发告警"
                 emptyHint="暂无故障日聚合，可设 ANALYTICS_ROLLUP_ON_START=true"
               />

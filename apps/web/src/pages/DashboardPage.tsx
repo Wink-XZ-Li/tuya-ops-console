@@ -377,7 +377,7 @@ function Sparkline({
   return (
     <TrendChart
       values={points.map((p) => ({ day: p.dt, value: p.value }))}
-      color={color.startsWith('var(') ? '#0b6bcb' : color}
+      color={color.startsWith('var(') ? '#1b6c80' : color}
       emptyHint={emptyHint}
     />
   );

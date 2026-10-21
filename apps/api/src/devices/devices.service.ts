@@ -130,6 +130,13 @@ export class DevicesService {
       productId: device.productId,
       openFaultAlerts: alerts,
     });
+    const fromDp = deriveSignalStrength(status);
+    const signalStrength = fromDp ?? (await this.tuya.getDeviceSignal(deviceId));
+    try {
+      await this.syncOwnerBinding(device.id, deviceId);
+    } catch {
+      // Signal and status still update when the owner lookup fails.
+    }
 
     await this.prisma.device.update({
       where: { id: device.id },
@@ -137,12 +144,53 @@ export class DevicesService {
         statusJson: status as Prisma.InputJsonValue,
         faultStatus: fault.faultStatus,
         faultInfo: fault.faultInfo,
-        signalStrength: deriveSignalStrength(status),
+        signalStrength,
         lastSeenAt: new Date(),
       },
     });
 
     return this.getByDeviceId(deviceId);
+  }
+
+  /** Device-user APIs are often empty; the device record's uid is the owner the user page already shows. */
+  private async syncOwnerBinding(internalId: string, tuyaDeviceId: string): Promise<void> {
+    const profiles = await this.tuya.getDeviceUserProfiles(tuyaDeviceId);
+    let owners = profiles.filter((profile) => profile.tuyaUid && !profile.tuyaUid.startsWith('uid-demo-'));
+    if (owners.length === 0) {
+      try {
+        const detail = await this.tuya.getDevice(tuyaDeviceId);
+        if (detail.uid && !detail.uid.startsWith('uid-demo-')) {
+          owners = [{ tuyaUid: detail.uid }];
+        }
+      } catch (err) {
+        // Keep the last stored binding if the cloud device read fails.
+        return;
+      }
+    }
+
+    const endUserIds: string[] = [];
+    for (const owner of owners) {
+      const endUser = await this.prisma.endUser.upsert({
+        where: { tuyaUid: owner.tuyaUid },
+        update: { syncedAt: new Date() },
+        create: { tuyaUid: owner.tuyaUid },
+      });
+      endUserIds.push(endUser.id);
+    }
+
+    await this.prisma.deviceBinding.deleteMany({
+      where: {
+        deviceId: internalId,
+        ...(endUserIds.length > 0 ? { endUserId: { notIn: endUserIds } } : {}),
+      },
+    });
+    for (const endUserId of endUserIds) {
+      await this.prisma.deviceBinding.upsert({
+        where: { deviceId_endUserId: { deviceId: internalId, endUserId } },
+        update: { syncedAt: new Date() },
+        create: { deviceId: internalId, endUserId, syncedAt: new Date() },
+      });
+    }
   }
 
   async getCloudReportLogs(

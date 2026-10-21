@@ -55,9 +55,11 @@ export function DevicesPage() {
         bindingsSynced: number;
         purgedMock?: number;
         purgedDemoUsers?: number;
+        removedDevices?: number;
       }>('/api/sync/reconcile', { method: 'POST' });
       setSyncMsg(
         `同步完成：设备 ${res.devicesSynced}，绑定 ${res.bindingsSynced}` +
+          (res.removedDevices ? `，已移除云端已取消关联 ${res.removedDevices}` : '') +
           (res.purgedMock ? `，已清除 mock 设备 ${res.purgedMock}` : '') +
           (res.purgedDemoUsers ? `，已清除 demo 用户 ${res.purgedDemoUsers}` : ''),
       );

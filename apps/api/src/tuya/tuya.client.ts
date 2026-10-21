@@ -8,6 +8,8 @@ export interface TuyaDeviceSummary {
   online?: boolean;
   lat?: string;
   lon?: string;
+  /** Owner uid from the cloud device record, when the list payload includes it. */
+  uid?: string;
 }
 
 export interface TuyaDeviceDetail extends TuyaDeviceSummary {
@@ -151,6 +153,8 @@ export interface TuyaClient {
   getDeviceUsers(deviceId: string): Promise<string[]>;
   /** Prefer this when syncing — may include nick/mobile from device-user APIs. */
   getDeviceUserProfiles(deviceId: string): Promise<TuyaUserProfile[]>;
+  /** GET /v2.0/cloud/thing/{id}/{wifi|zigbee}/signal. Null when the cloud has no recent sample. */
+  getDeviceSignal(deviceId: string): Promise<string | null>;
   getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null>;
   /** App users under schema — GET /v1.0/apps/{schema}/users */
   listAppUsers(params: {
@@ -312,6 +316,7 @@ export class TuyaLiveClient implements TuyaClient {
       category: result.category ? String(result.category) : undefined,
       lat: result.lat != null && String(result.lat) !== '' ? String(result.lat) : undefined,
       lon: result.lon != null && String(result.lon) !== '' ? String(result.lon) : undefined,
+      uid: result.uid != null && String(result.uid) !== '' ? String(result.uid) : undefined,
     };
   }
 
@@ -497,6 +502,7 @@ export class TuyaLiveClient implements TuyaClient {
                 : undefined,
         lat: d.lat != null && String(d.lat) !== '' ? String(d.lat) : undefined,
         lon: d.lon != null && String(d.lon) !== '' ? String(d.lon) : undefined,
+        uid: d.uid != null && String(d.uid) !== '' ? String(d.uid) : undefined,
       }))
       .filter((d) => d.deviceId);
 
@@ -535,6 +541,25 @@ export class TuyaLiveClient implements TuyaClient {
     }
     this.logger.warn(`getDeviceUserProfiles empty for ${deviceId}`);
     return [];
+  }
+
+  async getDeviceSignal(deviceId: string): Promise<string | null> {
+    for (const deviceType of ['wifi', 'zigbee']) {
+      try {
+        const res = await this.context.request<Record<string, unknown>>({
+          method: 'GET',
+          path: `/v2.0/cloud/thing/${deviceId}/${deviceType}/signal`,
+        });
+        if (!res.success || !res.result) continue;
+        const text = formatDeviceSignal(res.result);
+        if (text) return text;
+      } catch (err) {
+        this.logger.debug(
+          `getDeviceSignal ${deviceType} failed for ${deviceId}: ${String(err)}`,
+        );
+      }
+    }
+    return null;
   }
 
   async getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null> {
@@ -1216,6 +1241,19 @@ function pickUserFields(tuyaUid: string, result: Record<string, unknown>): TuyaU
     userProperties,
     raw: result,
   };
+}
+
+function formatDeviceSignal(result: Record<string, unknown>): string | null {
+  const signal = result.signal != null && String(result.signal) !== '' ? String(result.signal) : '';
+  const level =
+    result.signalLevel != null && String(result.signalLevel) !== ''
+      ? String(result.signalLevel)
+      : result.signal_level != null && String(result.signal_level) !== ''
+        ? String(result.signal_level)
+        : '';
+  if (!signal && !level) return null;
+  const dbm = signal ? (signal.includes('dBm') ? signal : `${signal} dBm`) : '';
+  return [dbm, level].filter(Boolean).join(' · ');
 }
 
 function parseDeviceUserResult(result: unknown): TuyaUserProfile[] {

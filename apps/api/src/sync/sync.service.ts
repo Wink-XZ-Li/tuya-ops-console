@@ -9,7 +9,7 @@ import {
 } from '../devices/device-derived';
 import { MAX_DEVICES } from '../demo/device-limits';
 import { PrismaService } from '../prisma/prisma.service';
-import { TUYA_CLIENT, TuyaClient, TuyaDeviceSummary } from '../tuya/tuya.client';
+import { TUYA_CLIENT, TuyaClient, TuyaDeviceSummary, TuyaUserProfile } from '../tuya/tuya.client';
 
 const PAGE_SIZE = 20;
 
@@ -61,6 +61,7 @@ export class SyncService {
     }
 
     let lastId: string | undefined;
+    const seenDeviceIds = new Set<string>();
     for (;;) {
       if (stoppedEarly) break;
 
@@ -92,9 +93,10 @@ export class SyncService {
         }
 
         const device = await this.upsertDevice(summary, syncedAt);
+        seenDeviceIds.add(summary.deviceId);
         devicesSynced += 1;
         await this.refreshDeviceStatusDerived(device.id, summary.deviceId, summary.productId);
-        const users = await this.tuya.getDeviceUserProfiles(summary.deviceId);
+        const users = await this.ownersFor(summary);
         bindingsSynced += await this.replaceBindings(device.id, users, syncedAt);
       }
 
@@ -104,16 +106,21 @@ export class SyncService {
       lastId = nextLastId;
     }
 
+    let removedDevices = 0;
+    if (!stoppedEarly) {
+      removedDevices = await this.removeDevicesMissingFromCloud(seenDeviceIds);
+    }
+
     await this.prisma.auditLog.create({
       data: {
         adminUserId,
         action: 'sync.reconcile',
         resource: 'sync',
-        detail: { devicesSynced, bindingsSynced, purgedMock, purgedDemoUsers } as Prisma.InputJsonValue,
+        detail: { devicesSynced, bindingsSynced, purgedMock, purgedDemoUsers, removedDevices } as Prisma.InputJsonValue,
       },
     });
 
-    return { devicesSynced, bindingsSynced, purgedMock, purgedDemoUsers };
+    return { devicesSynced, bindingsSynced, purgedMock, purgedDemoUsers, removedDevices };
   }
 
   /**
@@ -207,7 +214,7 @@ export class SyncService {
     const summary = await this.tuya.getDevice(deviceId);
     const device = await this.upsertDevice(summary, new Date());
     await this.refreshDeviceStatusDerived(device.id, deviceId, summary.productId);
-    const users = await this.tuya.getDeviceUserProfiles(deviceId);
+    const users = await this.ownersFor(summary);
     const bindingsSynced = await this.replaceBindings(device.id, users, new Date());
     await this.prisma.auditLog.create({
       data: {
@@ -288,18 +295,51 @@ export class SyncService {
         productId,
         openFaultAlerts: alerts,
       });
+      const fromDp = deriveSignalStrength(status);
+      const signalStrength = fromDp ?? (await this.tuya.getDeviceSignal(tuyaDeviceId));
       await this.prisma.device.update({
         where: { id: internalId },
         data: {
           statusJson: status as Prisma.InputJsonValue,
           faultStatus: fault.faultStatus,
           faultInfo: fault.faultInfo,
-          signalStrength: deriveSignalStrength(status),
+          signalStrength,
         },
       });
     } catch (err) {
       this.logger.warn(`status refresh failed for ${tuyaDeviceId}: ${String(err)}`);
     }
+  }
+
+  private async ownersFor(summary: TuyaDeviceSummary): Promise<TuyaUserProfile[]> {
+    const profiles = await this.tuya.getDeviceUserProfiles(summary.deviceId);
+    if (profiles.length > 0) return profiles;
+    if (summary.uid) return [{ tuyaUid: summary.uid }];
+    try {
+      const detail = await this.tuya.getDevice(summary.deviceId);
+      if (detail.uid) return [{ tuyaUid: detail.uid }];
+    } catch (err) {
+      this.logger.debug(`owner lookup failed for ${summary.deviceId}: ${String(err)}`);
+    }
+    return [];
+  }
+
+  private async removeDevicesMissingFromCloud(seenDeviceIds: Set<string>): Promise<number> {
+    const local = await this.prisma.device.findMany({
+      select: { id: true, deviceId: true },
+    });
+    const stale = local.filter((device) => !seenDeviceIds.has(device.deviceId));
+    if (stale.length === 0) return 0;
+    const ids = stale.map((device) => device.id);
+    await this.prisma.deviceBinding.deleteMany({ where: { deviceId: { in: ids } } });
+    await this.prisma.deviceEvent.deleteMany({ where: { deviceId: { in: ids } } });
+    await this.prisma.commandLog.deleteMany({ where: { deviceId: { in: ids } } });
+    await this.prisma.alert.deleteMany({ where: { deviceId: { in: ids } } });
+    const deleted = await this.prisma.device.deleteMany({ where: { id: { in: ids } } });
+    this.logger.warn(
+      `Removed ${deleted.count} devices no longer associated in Tuya cloud`,
+    );
+    return deleted.count;
   }
 
   private async replaceBindings(

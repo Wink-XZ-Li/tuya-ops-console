@@ -33,6 +33,8 @@ describe('SyncService', () => {
         total: 1,
       }),
       getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
+      getDevice: jest.fn().mockResolvedValue({ deviceId: 'new-1', productId: 'p', name: '', uid: undefined }),
+      getDeviceSignal: jest.fn().mockResolvedValue(null),
       getDeviceStatus: jest.fn().mockResolvedValue([]),
       getUserProfile: jest.fn().mockResolvedValue(null),
       reverseGeocode: jest.fn().mockResolvedValue({
@@ -63,6 +65,8 @@ describe('SyncService', () => {
         total: 1,
       }),
       getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
+      getDevice: jest.fn().mockResolvedValue({ deviceId: 'new-1', productId: 'p', name: '', uid: undefined }),
+      getDeviceSignal: jest.fn().mockResolvedValue(null),
       getDeviceStatus: jest.fn().mockResolvedValue([]),
       getUserProfile: jest.fn().mockResolvedValue(null),
       reverseGeocode: jest.fn().mockResolvedValue({
@@ -84,6 +88,92 @@ describe('SyncService', () => {
     const svc = new SyncService(prisma, tuya as any);
     await svc.reconcileAll('admin-1');
     expect(prisma.device.upsert).toHaveBeenCalled();
+  });
+
+  it('removes local devices that are no longer associated in the cloud list', async () => {
+    const prevMode = process.env.DEMO_MODE;
+    process.env.DEMO_MODE = 'mock';
+    const kept = { id: 'keep', deviceId: 'still-there' };
+    const tuya = {
+      listDevices: jest.fn().mockResolvedValue({
+        list: [{ deviceId: 'still-there', productId: 'p', name: 'Keep', online: true }],
+        total: 1,
+      }),
+      getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
+      getDevice: jest.fn().mockResolvedValue({ uid: undefined }),
+      getDeviceSignal: jest.fn().mockResolvedValue(null),
+      getDeviceStatus: jest.fn().mockResolvedValue([]),
+      getUserProfile: jest.fn().mockResolvedValue(null),
+      reverseGeocode: jest.fn(),
+    };
+    const prisma = basePrisma({
+      device: {
+        count: jest.fn().mockResolvedValue(2),
+        findMany: jest.fn().mockResolvedValue([
+          { id: 'keep', deviceId: 'still-there' },
+          { id: 'gone', deviceId: 'removed-in-cloud' },
+        ]),
+        findUnique: jest.fn().mockResolvedValue(kept),
+        upsert: jest.fn().mockResolvedValue(kept),
+        update: jest.fn().mockResolvedValue(kept),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    });
+    const svc = new SyncService(prisma, tuya as any);
+    try {
+      const result = await svc.reconcileAll('admin-1');
+      expect(result.removedDevices).toBe(1);
+      expect(prisma.device.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ['gone'] } },
+      });
+      expect(prisma.deviceBinding.deleteMany).toHaveBeenCalledWith({
+        where: { deviceId: { in: ['gone'] } },
+      });
+    } finally {
+      if (prevMode === undefined) delete process.env.DEMO_MODE;
+      else process.env.DEMO_MODE = prevMode;
+    }
+  });
+
+  it('binds the device owner uid when the device-user API is empty', async () => {
+    const existing = { id: 'dev-1', deviceId: 'vdevo1' };
+    const tuya = {
+      listDevices: jest.fn().mockResolvedValue({
+        list: [{ deviceId: 'vdevo1', productId: 'p', name: 'Boiler', online: true }],
+        total: 1,
+      }),
+      getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
+      getDevice: jest.fn().mockResolvedValue({ uid: 'ay-owner' }),
+      getDeviceSignal: jest.fn().mockResolvedValue('-40 dBm · Excellent'),
+      getDeviceStatus: jest.fn().mockResolvedValue([{ code: 'switch', value: true }]),
+      getUserProfile: jest.fn().mockResolvedValue(null),
+      reverseGeocode: jest.fn(),
+    };
+    const prisma = basePrisma({
+      device: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(existing),
+        upsert: jest.fn().mockResolvedValue(existing),
+        update: jest.fn().mockResolvedValue(existing),
+        deleteMany: jest.fn(),
+      },
+      endUser: {
+        findMany: jest.fn().mockResolvedValue([]),
+        upsert: jest.fn().mockResolvedValue({ id: 'user-1', tuyaUid: 'ay-owner' }),
+        deleteMany: jest.fn(),
+      },
+    });
+    const svc = new SyncService(prisma, tuya as any);
+    await svc.reconcileAll('admin-1');
+    expect(prisma.endUser.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { tuyaUid: 'ay-owner' } }),
+    );
+    expect(prisma.device.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ signalStrength: '-40 dBm · Excellent' }),
+      }),
+    );
   });
 
   describe('reconcileUsers', () => {

@@ -5,7 +5,7 @@ export type TrendPoint = { day: string; value: number };
 
 export function TrendChart({
   values,
-  color = '#0b6bcb',
+  color = '#1b6c80',
   emptyHint = '暂无数据',
   valueLabel = '数值',
 }: {

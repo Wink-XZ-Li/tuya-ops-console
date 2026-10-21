@@ -158,7 +158,7 @@ export function DevicesAnalyticsPage() {
               <h2>日故障设备数</h2>
               <MiniSparkline
                 values={data.dailyTrend.map((r) => ({ day: r.day, value: r.faultCount }))}
-                color="#c62828"
+                color="#c4242a"
                 valueLabel="故障设备"
                 emptyHint="暂无日聚合"
               />

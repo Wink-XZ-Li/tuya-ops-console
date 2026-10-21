@@ -89,14 +89,23 @@ export function AppLayout() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden />
+          <span className="brand-bits" aria-hidden>
+            <i />
+            <i />
+            <i className="on" />
+            <i />
+            <i className="on" />
+            <i />
+          </span>
           涂鸦运维台
         </div>
         <nav className="nav">
+          <div className="nav-label">总览</div>
           <NavLink className={({ isActive }) => (isActive ? 'active' : undefined)} to="/" end>
             <IconDashboard />
             看板
           </NavLink>
+          <div className="nav-label">分析</div>
           <NavLink
             className={({ isActive }) => (isActive ? 'active' : undefined)}
             to="/analytics/users"
@@ -125,6 +134,7 @@ export function AppLayout() {
             <IconDashboard />
             报表
           </NavLink>
+          <div className="nav-label">台账</div>
           <NavLink className={({ isActive }) => (isActive ? 'active' : undefined)} to="/devices">
             <IconDevices />
             设备
@@ -163,9 +173,19 @@ export function AppLayout() {
           </button>
         </div>
       </aside>
-      <main className="main">
-        <Outlet />
-      </main>
+      <div className="workspace">
+        <header className="topbar">
+          <span>中国区设备</span>
+          <span>
+            {username} · {role}
+          </span>
+        </header>
+        <div className="sheet">
+          <main className="main">
+            <Outlet />
+          </main>
+        </div>
+      </div>
     </div>
   );
 }
