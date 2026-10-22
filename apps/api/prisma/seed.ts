@@ -1,7 +1,10 @@
 import { PrismaClient, AdminRole } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { backfillFaultAlerts } from '../src/alerts/backfill-fault-alerts';
-import { DEMO_FAULT_COPY, PRODUCT_FAULT_BITMAP_LABELS } from '../src/devices/product-fault-schemas';
+import {
+  upsertFaultCodeDefinitions,
+  verifyWaterHeaterDictionary,
+} from '../src/fault-codes/fault-code-catalog';
 
 const prisma = new PrismaClient();
 
@@ -133,30 +136,8 @@ async function main() {
 }
 
 async function seedFaultCodeDefinitions() {
-  for (const [productId, byCode] of Object.entries(PRODUCT_FAULT_BITMAP_LABELS)) {
-    for (const [code, labels] of Object.entries(byCode)) {
-      for (const [sortOrder, label] of labels.entries()) {
-        const copy = DEMO_FAULT_COPY[label];
-        await prisma.faultCodeDefinition.upsert({
-          where: { productId_code_label: { productId, code, label } },
-          create: {
-            productId,
-            code,
-            label,
-            sortOrder,
-            symptom: copy?.symptom,
-            suggestedAction: copy?.suggestedAction,
-          },
-          update: {
-            sortOrder,
-            ...(copy
-              ? { symptom: copy.symptom, suggestedAction: copy.suggestedAction }
-              : {}),
-          },
-        });
-      }
-    }
-  }
+  await upsertFaultCodeDefinitions(prisma);
+  await verifyWaterHeaterDictionary(prisma);
 }
 
 function formatYmd(d: Date): string {

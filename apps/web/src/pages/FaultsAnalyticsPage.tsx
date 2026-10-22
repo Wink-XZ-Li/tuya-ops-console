@@ -100,7 +100,7 @@ export function FaultsAnalyticsPage() {
     <div className="stack">
       <div className="page-header">
         <h1>
-          故障分析
+          故障看板
           <span className="hint">质量故障率 · 待处理 · 持续时长</span>
         </h1>
         <div className="row gap">

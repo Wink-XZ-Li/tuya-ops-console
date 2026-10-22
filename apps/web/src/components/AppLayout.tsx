@@ -140,7 +140,7 @@ export function AppLayout() {
             to="/analytics/faults"
           >
             <IconAlerts />
-            故障分析
+            故障看板
           </NavLink>
           <NavLink
             className={({ isActive }) => (isActive ? 'active' : undefined)}
@@ -162,6 +162,15 @@ export function AppLayout() {
             <IconAlerts />
             告警
           </NavLink>
+          <RoleGate allow={['admin', 'operator']}>
+            <NavLink
+              className={({ isActive }) => (isActive ? 'active' : undefined)}
+              to="/fault-codes"
+            >
+              <IconAlerts />
+              故障字典
+            </NavLink>
+          </RoleGate>
           <NavLink className={({ isActive }) => (isActive ? 'active' : undefined)} to="/commands">
             <IconCommands />
             指令历史

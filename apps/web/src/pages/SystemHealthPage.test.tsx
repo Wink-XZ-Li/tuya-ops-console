@@ -110,7 +110,7 @@ describe('SystemHealthPage', () => {
 });
 
 describe('system health navigation', () => {
-  it('lists 系统健康 apart from 告警 and 故障分析', () => {
+  it('lists 系统健康 apart from 告警 and 故障看板', () => {
     render(
       <MemoryRouter>
         <AppLayout />
@@ -119,6 +119,19 @@ describe('system health navigation', () => {
 
     expect(screen.getByRole('link', { name: '系统健康' })).toHaveAttribute('href', '/system-health');
     expect(screen.getByRole('link', { name: '告警' })).toHaveAttribute('href', '/alerts');
-    expect(screen.getByRole('link', { name: '故障分析' })).toHaveAttribute('href', '/analytics/faults');
+    expect(screen.getByRole('link', { name: '故障看板' })).toHaveAttribute('href', '/analytics/faults');
+    expect(screen.queryByRole('link', { name: '故障字典' })).not.toBeInTheDocument();
+  });
+
+  it('shows 故障字典 for operators', () => {
+    localStorage.setItem('ops_role', 'operator');
+    render(
+      <MemoryRouter>
+        <AppLayout />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: '故障字典' })).toHaveAttribute('href', '/fault-codes');
+    localStorage.removeItem('ops_role');
   });
 });

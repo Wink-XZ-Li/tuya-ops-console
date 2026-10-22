@@ -9,6 +9,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DeviceDetailPage } from './pages/DeviceDetailPage';
 import { DevicesAnalyticsPage } from './pages/DevicesAnalyticsPage';
 import { DevicesPage } from './pages/DevicesPage';
+import { FaultCodeDictionaryPage } from './pages/FaultCodeDictionaryPage';
 import { FaultsAnalyticsPage } from './pages/FaultsAnalyticsPage';
 import { LoginPage } from './pages/LoginPage';
 import { ReportsPage } from './pages/ReportsPage';
@@ -27,6 +28,17 @@ function RequireAuth({ children }: { children: ReactNode }) {
 function AdminOnly({ children }: { children: ReactNode }) {
   return (
     <RoleGate allow={['admin']} fallback={<p className="error">需要 admin 角色</p>}>
+      {children}
+    </RoleGate>
+  );
+}
+
+function OperatorGate({ children }: { children: ReactNode }) {
+  return (
+    <RoleGate
+      allow={['admin', 'operator']}
+      fallback={<p className="error">需要 operator 或 admin 角色</p>}
+    >
       {children}
     </RoleGate>
   );
@@ -59,6 +71,14 @@ export default function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="users/:tuyaUid" element={<UserDetailPage />} />
         <Route path="alerts" element={<AlertsPage />} />
+        <Route
+          path="fault-codes"
+          element={
+            <OperatorGate>
+              <FaultCodeDictionaryPage />
+            </OperatorGate>
+          }
+        />
         <Route path="commands" element={<CommandHistoryPage />} />
         <Route
           path="settings/aliases"

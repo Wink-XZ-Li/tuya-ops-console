@@ -2,7 +2,11 @@ import { AlertStatus, Prisma, PrismaClient } from '@prisma/client';
 import { backfillFaultAlerts } from '../src/alerts/backfill-fault-alerts';
 import { RollupJob } from '../src/analytics/rollup.job';
 import { asRecord, decodeBitmapLabels } from '../src/devices/device-derived';
-import { DEMO_FAULT_COPY, PRODUCT_FAULT_BITMAP_LABELS } from '../src/devices/product-fault-schemas';
+import { PRODUCT_FAULT_BITMAP_LABELS } from '../src/devices/product-fault-schemas';
+import {
+  upsertFaultCodeDefinitions,
+  verifyWaterHeaterDictionary,
+} from '../src/fault-codes/fault-code-catalog';
 
 const prisma = new PrismaClient();
 const WX2 = '90wi2aimyqstn9qc';
@@ -18,31 +22,11 @@ function hoursAgo(hours: number): Date {
 }
 
 async function upsertDefinitions(): Promise<void> {
-  for (const [productId, byCode] of Object.entries(PRODUCT_FAULT_BITMAP_LABELS)) {
-    for (const [code, labels] of Object.entries(byCode)) {
-      for (const [sortOrder, label] of labels.entries()) {
-        const copy = DEMO_FAULT_COPY[label];
-        await prisma.faultCodeDefinition.upsert({
-          where: { productId_code_label: { productId, code, label } },
-          create: {
-            productId,
-            code,
-            label,
-            sortOrder,
-            symptom: copy?.symptom,
-            suggestedAction: copy?.suggestedAction,
-          },
-          update: {
-            sortOrder,
-            ...(copy ? { symptom: copy.symptom, suggestedAction: copy.suggestedAction } : {}),
-          },
-        });
-      }
-    }
-  }
+  await upsertFaultCodeDefinitions(prisma);
   await prisma.faultCodeDefinition.deleteMany({
     where: { productId: WX2, label: { startsWith: 'bit' } },
   });
+  await verifyWaterHeaterDictionary(prisma);
 }
 
 async function ensureAlert(input: {
