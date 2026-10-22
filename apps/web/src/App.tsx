@@ -13,6 +13,7 @@ import { FaultsAnalyticsPage } from './pages/FaultsAnalyticsPage';
 import { LoginPage } from './pages/LoginPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { SettingsAliasesPage } from './pages/SettingsAliasesPage';
+import { SystemHealthPage } from './pages/SystemHealthPage';
 import { UsersAnalyticsPage } from './pages/UsersAnalyticsPage';
 import { UserDetailPage, UsersPage } from './pages/UsersPage';
 
@@ -48,6 +49,7 @@ export default function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="dashboard" element={<Navigate to="/" replace />} />
+        <Route path="system-health" element={<SystemHealthPage />} />
         <Route path="analytics/users" element={<UsersAnalyticsPage />} />
         <Route path="analytics/devices" element={<DevicesAnalyticsPage />} />
         <Route path="analytics/faults" element={<FaultsAnalyticsPage />} />

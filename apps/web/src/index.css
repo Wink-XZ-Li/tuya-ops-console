@@ -1193,3 +1193,64 @@ table.data tbody tr.no-click {
   margin: 0;
   font-size: 0.86rem;
 }
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+
+.health-card {
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0.85rem 0.95rem 0.95rem;
+  background: var(--surface);
+}
+
+.health-card.healthy {
+  border-top-color: var(--positive);
+}
+
+.health-card.degraded {
+  border-top-color: var(--warn);
+}
+
+.health-card.critical {
+  border-top-color: var(--danger);
+}
+
+.health-card h3 {
+  margin: 0.45rem 0 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.health-card p {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.health-runbook {
+  margin-top: 0.55rem;
+}
+
+.issue-steps {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.issue-steps li + li {
+  margin-top: 0.2rem;
+}
+
+.cmd-block {
+  margin: 0.45rem 0;
+  padding: 0.5rem 0.65rem;
+  background: var(--raised);
+  border-radius: var(--radius-control);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}

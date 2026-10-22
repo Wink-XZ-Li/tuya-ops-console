@@ -8,6 +8,7 @@ import { DpAliasesModule } from './dp-aliases/dp-aliases.module';
 import { EndUsersModule } from './end-users/end-users.module';
 import { KafkaModule } from './kafka/kafka.module';
 import { SyncModule } from './sync/sync.module';
+import { SystemHealthModule } from './system-health/system-health.module';
 import { TuyaModule } from './tuya/tuya.module';
 
 @Module({
@@ -22,6 +23,7 @@ import { TuyaModule } from './tuya/tuya.module';
     CommandsModule,
     DpAliasesModule,
     AlertsModule,
+    SystemHealthModule,
   ],
 })
 export class AppModule {}

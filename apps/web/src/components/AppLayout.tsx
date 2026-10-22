@@ -15,6 +15,14 @@ function IconDashboard() {
   );
 }
 
+function IconHealth() {
+  return (
+    <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden>
+      <path d="M3 12h4l2.2-5 3.6 10L15 12h6" />
+    </svg>
+  );
+}
+
 function IconDevices() {
   return (
     <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden>
@@ -104,6 +112,13 @@ export function AppLayout() {
           <NavLink className={({ isActive }) => (isActive ? 'active' : undefined)} to="/" end>
             <IconDashboard />
             看板
+          </NavLink>
+          <NavLink
+            className={({ isActive }) => (isActive ? 'active' : undefined)}
+            to="/system-health"
+          >
+            <IconHealth />
+            系统健康
           </NavLink>
           <div className="nav-label">分析</div>
           <NavLink
