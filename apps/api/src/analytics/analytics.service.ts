@@ -19,6 +19,7 @@ import {
   TuyaLocationDateType,
   TuyaRegisterStatPoint,
 } from '../tuya/tuya.client';
+import { summarizeFaultCodesByProduct } from './fault-code-breakdown';
 import { extractModeLabel } from './rollup.job';
 
 const CACHE_TTL_MS = 8 * 60 * 1000;
@@ -265,7 +266,6 @@ export class AnalyticsService {
       string,
       { day: string; newCount: number; closedCount: number; openCount: number }
     >();
-    const histogramMap = new Map<string, number>();
     for (const row of daily) {
       const t = trendByDay.get(row.day) ?? {
         day: row.day,
@@ -277,7 +277,6 @@ export class AnalyticsService {
       t.closedCount += row.closedCount;
       t.openCount += row.openCount;
       trendByDay.set(row.day, t);
-      histogramMap.set(row.faultCode, (histogramMap.get(row.faultCode) ?? 0) + row.newCount);
     }
 
     const rollupCorr = await this.prisma.dailyFaultStat.groupBy({
@@ -341,13 +340,19 @@ export class AnalyticsService {
           surveyPack.survey?.deviceFault ?? surveyPack.live?.deviceFault ?? null,
       },
       dailyTrend: [...trendByDay.values()],
-      faultCodeHistogram: [...histogramMap.entries()]
-        .map(([faultCode, count]) => ({ faultCode, count }))
-        .filter((row) => row.count > 0)
-        .sort((a, b) => b.count - a.count),
+      faultCodeHistogram: summarizeFaultCodesByProduct(
+        rollupCorr.map((row) => ({
+          productId: row.productId,
+          faultCode: row.faultCode,
+          newCount: row._sum.newCount ?? 0,
+        })),
+      ),
       correlation: [...correlationMap.values()]
         .filter((row) => row.newCount > 0 || row.liveFaultDevices > 0)
-        .sort((a, b) => b.newCount + b.liveFaultDevices - (a.newCount + a.liveFaultDevices)),
+        .sort((a, b) => {
+          if (a.productId !== b.productId) return a.productId < b.productId ? -1 : 1;
+          return b.newCount - a.newCount || a.faultCode.localeCompare(b.faultCode);
+        }),
       byLocation: [...locationMap.entries()]
         .map(([location, count]) => ({ location, count }))
         .sort((a, b) => b.count - a.count),
@@ -773,7 +778,7 @@ function buildReportCsv(result: Record<string, unknown>, sections: string[]): st
     | {
         kpis?: Record<string, unknown>;
         dailyTrend?: Array<Record<string, unknown>>;
-        faultCodeHistogram?: Array<{ faultCode: string; count: number }>;
+        faultCodeHistogram?: Array<{ productId: string; faultCode: string; count: number }>;
       }
     | undefined;
   if (faults?.kpis) {
@@ -793,7 +798,7 @@ function buildReportCsv(result: Record<string, unknown>, sections: string[]): st
   if (faults?.faultCodeHistogram) {
     for (const row of faults.faultCodeHistogram) {
       lines.push(
-        `faults.histogram,${csvEscape(row.faultCode)},${csvEscape(String(row.count))}`,
+        `faults.histogram,${csvEscape(`${row.productId}/${row.faultCode}`)},${csvEscape(String(row.count))}`,
       );
     }
   }

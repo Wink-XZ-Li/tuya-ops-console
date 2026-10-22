@@ -15,6 +15,35 @@ import {
 import { formatProductLabel } from '../constants/product-names';
 import { formatFaultDuration } from '../utils/format-fault-duration';
 
+type FaultCorrelation = {
+  productId: string;
+  faultCode: string;
+  newCount: number;
+  liveFaultDevices: number;
+};
+
+export function groupFaultsByProduct(rows: FaultCorrelation[]): Array<{
+  productId: string;
+  rows: FaultCorrelation[];
+}> {
+  const groups = new Map<string, FaultCorrelation[]>();
+  for (const row of rows) {
+    const list = groups.get(row.productId) ?? [];
+    list.push(row);
+    groups.set(row.productId, list);
+  }
+  return [...groups.entries()]
+    .map(([productId, items]) => ({
+      productId,
+      total: items.reduce((sum, item) => sum + item.newCount + item.liveFaultDevices, 0),
+      rows: [...items].sort(
+        (a, b) => b.newCount - a.newCount || a.faultCode.localeCompare(b.faultCode),
+      ),
+    }))
+    .sort((a, b) => b.total - a.total || a.productId.localeCompare(b.productId))
+    .map(({ productId, rows: grouped }) => ({ productId, rows: grouped }));
+}
+
 type FaultsAnalytics = {
   startDay: string;
   endDay: string;
@@ -36,7 +65,7 @@ type FaultsAnalytics = {
     closedCount: number;
     openCount: number;
   }>;
-  faultCodeHistogram: Array<{ faultCode: string; count: number }>;
+  faultCodeHistogram: Array<{ productId: string; faultCode: string; count: number }>;
   correlation: Array<{
     productId: string;
     faultCode: string;
@@ -95,6 +124,8 @@ export function FaultsAnalyticsPage() {
     setPreset('custom');
     void load();
   }
+
+  const faultGroups = data ? groupFaultsByProduct(data.correlation) : [];
 
   return (
     <div className="stack">
@@ -187,51 +218,49 @@ export function FaultsAnalyticsPage() {
           </div>
 
           <section className="card">
-            <h2>故障码分布</h2>
-            <BarTable
-              nameHeader="故障"
-              rows={data.faultCodeHistogram.map((r) => ({
-                name: r.faultCode,
-                value: r.count,
-              }))}
-            />
-          </section>
-
-          <section className="card">
-            <h2>关联：产品 × 故障</h2>
-            <div className="table-wrap">
-              <table className="data">
-                <thead>
-                  <tr>
-                    <th>产品</th>
-                    <th>故障</th>
-                    <th>区间新发</th>
-                    <th>当前故障设备</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.correlation.length === 0 ? (
-                    <tr className="no-click">
-                      <td colSpan={4} className="hint">
-                        暂无关联数据
-                      </td>
-                    </tr>
-                  ) : (
-                    data.correlation.map((row) => (
-                      <tr
-                        key={`${row.productId}-${row.faultCode}`}
-                        className="no-click"
-                      >
-                        <td>{formatProductLabel(row.productId)}</td>
-                        <td>{row.faultCode}</td>
-                        <td className="mono">{formatNumber(row.newCount)}</td>
-                        <td className="mono">{formatNumber(row.liveFaultDevices)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <h2>故障码分析</h2>
+            <p className="muted">按产品分开。同一个故障码在不同产品里不合并。</p>
+            {faultGroups.length === 0 ? (
+              <p className="hint">暂无故障码数据</p>
+            ) : (
+              faultGroups.map((group) => {
+                const max = Math.max(1, ...group.rows.map((row) => row.newCount));
+                return (
+                  <section key={group.productId} aria-label={formatProductLabel(group.productId)}>
+                    <h3>{formatProductLabel(group.productId)}</h3>
+                    <div className="table-wrap">
+                      <table className="data">
+                        <thead>
+                          <tr>
+                            <th>故障码</th>
+                            <th>区间新发</th>
+                            <th>当前故障设备</th>
+                            <th>分布</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.rows.map((row) => (
+                            <tr key={row.faultCode} className="no-click">
+                              <td>{row.faultCode}</td>
+                              <td className="mono">{formatNumber(row.newCount)}</td>
+                              <td className="mono">{formatNumber(row.liveFaultDevices)}</td>
+                              <td>
+                                <div className="bar-track">
+                                  <div
+                                    className="bar-fill"
+                                    style={{ width: `${(row.newCount / max) * 100}%` }}
+                                  />
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                );
+              })
+            )}
           </section>
 
           <section className="card">

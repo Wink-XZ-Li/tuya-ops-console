@@ -14,7 +14,8 @@ const DEMO_PRODUCTS = [
   'nohrp3vbmef7vxvx',
 ];
 
-const FAULT_CODES = ['E1', 'E3', 'E0'];
+/** 早期图表种子写过的故障码。这些码被套到多个产品上，不是各产品位图。 */
+const DEMO_SEEDED_FAULT_CODES = ['E0', 'E1', 'E3'];
 
 async function main() {
   const passwordHash = await bcrypt.hash('ChangeMe123!', 10);
@@ -32,12 +33,15 @@ async function main() {
     });
   }
 
-  // Optional chart seed: last 7 days of rollups for mock UI.
+  // Optional chart seed: last 7 days of device rollups for mock UI.
+  // 故障码不再按 E0/E1/E3 套到每个演示产品上；并清掉已经写入的这批演示行。
   const today = new Date();
+  const seededDays: string[] = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     const day = formatYmd(d);
+    seededDays.push(day);
     const baseOnline = 40 + (6 - i) * 2;
     const total = 60 + (i % 3);
 
@@ -83,54 +87,16 @@ async function main() {
           modeCounts: { auto: 8 + pi, cool: 4, sleep: 1 },
         },
       });
-
-      for (const [fi, faultCode] of FAULT_CODES.entries()) {
-        await prisma.dailyFaultStat.upsert({
-          where: {
-            day_productId_faultCode: { day, productId, faultCode },
-          },
-          create: {
-            day,
-            productId,
-            faultCode,
-            openCount: 1 + ((i + fi) % 3),
-            newCount: 1 + ((i + fi) % 4),
-            closedCount: (i + fi) % 3,
-            mttrMinutesAvg: 30 + fi * 15 + i * 5,
-          },
-          update: {
-            openCount: 1 + ((i + fi) % 3),
-            newCount: 1 + ((i + fi) % 4),
-            closedCount: (i + fi) % 3,
-            mttrMinutesAvg: 30 + fi * 15 + i * 5,
-          },
-        });
-      }
-    }
-
-    for (const [fi, faultCode] of FAULT_CODES.entries()) {
-      await prisma.dailyFaultStat.upsert({
-        where: {
-          day_productId_faultCode: { day, productId: '', faultCode },
-        },
-        create: {
-          day,
-          productId: '',
-          faultCode,
-          openCount: 3 + ((i + fi) % 4),
-          newCount: 2 + ((i + fi) % 5),
-          closedCount: 1 + ((i + fi) % 3),
-          mttrMinutesAvg: 45 + fi * 10,
-        },
-        update: {
-          openCount: 3 + ((i + fi) % 4),
-          newCount: 2 + ((i + fi) % 5),
-          closedCount: 1 + ((i + fi) % 3),
-          mttrMinutesAvg: 45 + fi * 10,
-        },
-      });
     }
   }
+
+  await prisma.dailyFaultStat.deleteMany({
+    where: {
+      day: { in: seededDays },
+      faultCode: { in: DEMO_SEEDED_FAULT_CODES },
+      productId: { in: [...DEMO_PRODUCTS, ''] },
+    },
+  });
 
   await backfillFaultAlerts(prisma);
 }
