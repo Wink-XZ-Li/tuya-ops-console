@@ -5,6 +5,7 @@ import {
   upsertFaultCodeDefinitions,
   verifyWaterHeaterDictionary,
 } from '../src/fault-codes/fault-code-catalog';
+import { ensureFaultCodeGroups } from '../src/fault-codes/fault-code-groups';
 
 const prisma = new PrismaClient();
 
@@ -104,6 +105,7 @@ async function main() {
 async function seedFaultCodeDefinitions() {
   await upsertFaultCodeDefinitions(prisma);
   await verifyWaterHeaterDictionary(prisma);
+  await ensureFaultCodeGroups(prisma);
 }
 
 function formatYmd(d: Date): string {

@@ -5,6 +5,7 @@ import {
   verifyWaterHeaterDictionary,
   WATER_HEATER_PRODUCT_ID,
 } from '../src/fault-codes/fault-code-catalog';
+import { ensureFaultCodeGroups } from '../src/fault-codes/fault-code-groups';
 
 const prisma = new PrismaClient();
 const SAMPLE_PRODUCT_ID = '1x0qz5jtlabxywcg';
@@ -13,6 +14,7 @@ const SAMPLE_LABEL = 'E1';
 async function main() {
   const summary = await upsertFaultCodeDefinitions(prisma);
   const waterHeater = await verifyWaterHeaterDictionary(prisma);
+  const groups = await ensureFaultCodeGroups(prisma);
   const meaning = getFaultMeaning(SAMPLE_PRODUCT_ID, SAMPLE_LABEL);
   const sample = await prisma.faultCodeDefinition.findUnique({
     where: {
@@ -32,6 +34,7 @@ async function main() {
     JSON.stringify(
       {
         summary,
+        groups,
         waterHeater,
         sample: {
           productId: SAMPLE_PRODUCT_ID,

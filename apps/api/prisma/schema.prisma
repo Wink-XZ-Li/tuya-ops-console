@@ -192,6 +192,40 @@ model FaultCodeDefinition {
   @@unique([productId, code, label])
 }
 
+/// Shared fault-code dictionary. Member products keep their own FaultCodeDefinition rows.
+model FaultCodeGroup {
+  id        String                 @id @default(cuid())
+  name      String                 @db.VarChar(128)
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+  members   FaultCodeGroupMember[]
+  codes     FaultCodeGroupCode[]
+}
+
+model FaultCodeGroupMember {
+  groupId   String         @db.VarChar(191)
+  productId String         @unique @db.VarChar(64)
+  group     FaultCodeGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, productId])
+}
+
+model FaultCodeGroupCode {
+  id                 String         @id @default(cuid())
+  groupId            String
+  code               String         @db.VarChar(64)
+  label              String         @db.VarChar(64)
+  sortOrder          Int            @default(0)
+  symptom            String?        @db.VarChar(256)
+  cause              String?        @db.VarChar(256)
+  suggestedAction    String?        @db.VarChar(256)
+  countInQualityRate Boolean        @default(true)
+  notifyAftersales   Boolean        @default(false)
+  group              FaultCodeGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, code, label])
+}
+
 model DpAlias {
   id        String   @id @default(cuid())
   productId String
