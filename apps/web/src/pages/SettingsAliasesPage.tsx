@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { api, qs } from '../api/client';
+import { formatProductLabel, PRODUCT_IDS } from '../constants/product-names';
 
 type DpAlias = {
   id: string;
@@ -9,16 +10,6 @@ type DpAlias = {
   groupName?: string | null;
   sortOrder: number;
 };
-
-const PRODUCT_IDS = [
-  'uhmj5b0ba31zpme6',
-  'qxjzruuqz40bty7e',
-  'nohrp3vbmef7vxvx',
-  '7sylzgrdnnq2w5mo',
-  'wquesyz0b2h8mxsu',
-  'ckjfqtnqqystvfaa',
-  '90wi2aimyqstn9qc',
-];
 
 export function SettingsAliasesPage() {
   const [productId, setProductId] = useState('');
@@ -90,7 +81,7 @@ export function SettingsAliasesPage() {
             >
               {PRODUCT_IDS.map((id) => (
                 <option key={id} value={id}>
-                  {id}
+                  {formatProductLabel(id)}
                 </option>
               ))}
             </select>
@@ -141,7 +132,7 @@ export function SettingsAliasesPage() {
             <option value="">全部产品</option>
             {PRODUCT_IDS.map((id) => (
               <option key={id} value={id}>
-                {id}
+                {formatProductLabel(id)}
               </option>
             ))}
           </select>
