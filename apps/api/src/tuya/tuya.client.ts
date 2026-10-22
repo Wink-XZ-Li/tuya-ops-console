@@ -153,7 +153,10 @@ export interface TuyaClient {
   getDeviceUsers(deviceId: string): Promise<string[]>;
   /** Prefer this when syncing — may include nick/mobile from device-user APIs. */
   getDeviceUserProfiles(deviceId: string): Promise<TuyaUserProfile[]>;
-  /** GET /v2.0/cloud/thing/{id}/{wifi|zigbee}/signal. Null when the cloud has no recent sample. */
+  /**
+   * Wi-Fi/Zigbee signal sample, or the latest type-8 device log when that sample is empty.
+   * Null when the cloud has no signal report.
+   */
   getDeviceSignal(deviceId: string): Promise<string | null>;
   getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null>;
   /** App users under schema — GET /v1.0/apps/{schema}/users */
@@ -559,7 +562,41 @@ export class TuyaLiveClient implements TuyaClient {
         );
       }
     }
-    return null;
+    return this.getSignalFromDeviceLogs(deviceId);
+  }
+
+  /**
+   * The thing signal API often returns only eventTime=0 for these modules.
+   * Device logs type 8 is the semaphore stream and carries the dBm value.
+   */
+  private async getSignalFromDeviceLogs(deviceId: string): Promise<string | null> {
+    const end = Date.now();
+    const start = end - 7 * 24 * 60 * 60 * 1000;
+    try {
+      const res = await this.context.request<Record<string, unknown>>({
+        method: 'GET',
+        path: `/v1.0/devices/${deviceId}/logs`,
+        query: {
+          type: '8',
+          start_time: String(start),
+          end_time: String(end),
+          size: '20',
+        },
+      });
+      if (!res.success || !res.result) return null;
+      const logs = (res.result.logs ?? res.result.list ?? []) as Array<Record<string, unknown>>;
+      let best: { time: number; value: string } | null = null;
+      for (const row of logs) {
+        const value = String(row.event_value ?? row.eventValue ?? '').trim();
+        const time = Number(row.event_time ?? row.eventTime ?? 0);
+        if (!value) continue;
+        if (!best || time >= best.time) best = { time, value };
+      }
+      return best ? formatSignalDbm(best.value) : null;
+    } catch (err) {
+      this.logger.debug(`getSignalFromDeviceLogs failed for ${deviceId}: ${String(err)}`);
+      return null;
+    }
   }
 
   async getUserProfile(tuyaUid: string): Promise<TuyaUserProfile | null> {
@@ -941,6 +978,25 @@ export class TuyaLiveClient implements TuyaClient {
   }): Promise<TuyaDeviceReportLogsPage> {
     // iot-03 report-logs is not authorized on this cloud project (28841105).
     // Device logs type=7 is the data-point report stream and is authorized.
+    // Tuya sometimes returns an empty page with has_next; follow a few cursors.
+    let cursor = params.lastRowKey;
+    for (let hop = 0; hop < 6; hop++) {
+      const page = await this.fetchReportLogPage({ ...params, lastRowKey: cursor });
+      const stuck = Boolean(page.hasMore && page.lastRowKey && page.lastRowKey === cursor);
+      if (page.list.length > 0 || !page.hasMore || !page.lastRowKey || stuck) return page;
+      cursor = page.lastRowKey;
+    }
+    return this.fetchReportLogPage({ ...params, lastRowKey: cursor });
+  }
+
+  private async fetchReportLogPage(params: {
+    deviceId: string;
+    codes: string;
+    startTime: number;
+    endTime: number;
+    size?: number;
+    lastRowKey?: string;
+  }): Promise<TuyaDeviceReportLogsPage> {
     const query: Record<string, string> = {
       type: '7',
       start_time: String(params.startTime),
@@ -1241,6 +1297,13 @@ function pickUserFields(tuyaUid: string, result: Record<string, unknown>): TuyaU
     userProperties,
     raw: result,
   };
+}
+
+function formatSignalDbm(raw: string): string | null {
+  if (raw.includes('dBm')) return raw;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return `${n} dBm`;
 }
 
 function formatDeviceSignal(result: Record<string, unknown>): string | null {

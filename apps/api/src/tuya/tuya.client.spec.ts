@@ -1,4 +1,5 @@
-import { isAllowedProduct, propertiesFromThingModel } from './tuya.client';
+import { TuyaContext } from '@tuya/tuya-connector-nodejs';
+import { isAllowedProduct, propertiesFromThingModel, TuyaLiveClient } from './tuya.client';
 import { MOCK_DEVICES, TuyaMockClient } from './tuya.mock';
 
 describe('isAllowedProduct', () => {
@@ -46,6 +47,61 @@ describe('propertiesFromThingModel', () => {
       type: 'bitmap',
       dpId: 20,
     });
+  });
+});
+
+describe('TuyaLiveClient.getDeviceSignal', () => {
+  it('uses the latest type-8 log when the wifi signal sample is empty', async () => {
+    const request = jest.fn(async (args: { path: string; query?: Record<string, string> }) => {
+      if (args.path.endsWith('/wifi/signal')) {
+        return { success: true, result: { eventTime: 0 } };
+      }
+      if (args.path.endsWith('/zigbee/signal')) {
+        return { success: false, code: 2009, msg: 'not support this device' };
+      }
+      if (args.query?.type === '8') {
+        return {
+          success: true,
+          result: {
+            logs: [
+              { event_value: '-52', event_time: 100 },
+              { event_value: '-42', event_time: 200 },
+            ],
+          },
+        };
+      }
+      return { success: false };
+    });
+    const client = new TuyaLiveClient({ request } as unknown as TuyaContext);
+    await expect(client.getDeviceSignal('dev-1')).resolves.toBe('-42 dBm');
+  });
+});
+
+describe('TuyaLiveClient.getDeviceReportLogs', () => {
+  it('follows an empty page until a cursor returns rows', async () => {
+    const request = jest.fn(async (args: { path: string; query?: Record<string, string> }) => {
+      if (!args.query?.start_row_key) {
+        return { success: true, result: { logs: [], has_next: true, next_row_key: 'cursor-2' } };
+      }
+      return {
+        success: true,
+        result: {
+          logs: [{ code: 'fault', value: '0', event_time: 10 }],
+          has_next: false,
+        },
+      };
+    });
+    const client = new TuyaLiveClient({ request } as unknown as TuyaContext);
+    const page = await client.getDeviceReportLogs({
+      deviceId: 'dev-1',
+      codes: '',
+      startTime: 1,
+      endTime: 2,
+      size: 20,
+    });
+    expect(page.list).toEqual([{ code: 'fault', value: 0, eventTime: 10 }]);
+    expect(page.hasMore).toBe(false);
+    expect(request).toHaveBeenCalledTimes(2);
   });
 });
 

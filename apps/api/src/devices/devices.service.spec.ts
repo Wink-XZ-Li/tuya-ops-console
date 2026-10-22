@@ -54,4 +54,33 @@ describe('DevicesService', () => {
     expect(detail.bindings.map((b: { tuyaUid: string }) => b.tuyaUid)).toEqual(['ay-owner']);
     expect(detail.signalStrength).toBe('-40 dBm · Excellent');
   });
+
+  it('asks the cloud log API for one cursor page inside a 7-day window', async () => {
+    const prisma = { device: { findUnique: jest.fn().mockResolvedValue({ id: 'dev-1' }) } };
+    const tuya = {
+      getDeviceReportLogs: jest.fn().mockResolvedValue({
+        deviceId: 'vdevo1',
+        list: [],
+        hasMore: true,
+        lastRowKey: 'next',
+      }),
+    };
+    const svc = new DevicesService(prisma as any, tuya as any);
+    const endTime = 1_700_000_000_000;
+    const page = await svc.getCloudReportLogs('vdevo1', {
+      hours: 168,
+      size: 50,
+      lastRowKey: 'cursor',
+      endTime,
+    });
+    expect(tuya.getDeviceReportLogs).toHaveBeenCalledWith({
+      deviceId: 'vdevo1',
+      codes: '',
+      startTime: endTime - 168 * 3600_000,
+      endTime,
+      size: 50,
+      lastRowKey: 'cursor',
+    });
+    expect(page).toMatchObject({ startTime: endTime - 168 * 3600_000, endTime, hasMore: true });
+  });
 });

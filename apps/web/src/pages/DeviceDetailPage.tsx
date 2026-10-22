@@ -12,6 +12,10 @@ import {
 import { getProductDps } from '../constants/product-dp-schemas';
 import { formatFaultInfoDisplay } from '../constants/product-fault-schemas';
 import { formatProductLabel } from '../constants/product-names';
+import {
+  eventPropertyLines,
+  PropertyCatalogItem,
+} from '../utils/format-event-properties';
 
 type DeviceDetail = {
   deviceId: string;
@@ -39,12 +43,29 @@ type EventRow = {
   eventTime: string;
 };
 
+type CloudLogRow = { code: string; value: unknown; eventTime: number };
+
+type CloudLogPage = {
+  list: CloudLogRow[];
+  hasMore: boolean;
+  lastRowKey?: string;
+  startTime: number;
+  endTime: number;
+};
+
+const EVENT_PAGE_SIZE = 50;
+const CLOUD_HOURS = 168;
+const CLOUD_PAGE_SIZE = 50;
+
 export function DeviceDetailPage() {
   const { deviceId = '' } = useParams();
   const [device, setDevice] = useState<DeviceDetail | null>(null);
   const [functions, setFunctions] = useState<DeviceFunction[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [eventsTotal, setEventsTotal] = useState(0);
+  const [eventPage, setEventPage] = useState(1);
+  const [eventPageDraft, setEventPageDraft] = useState('1');
+  const [eventsLimited, setEventsLimited] = useState(false);
   const [bizCodes, setBizCodes] = useState<string[]>([]);
   const [dpIds, setDpIds] = useState<string[]>([]);
   const [from, setFrom] = useState('');
@@ -53,9 +74,15 @@ export function DeviceDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [cloudLogs, setCloudLogs] = useState<
-    Array<{ code: string; value: unknown; eventTime: number }>
-  >([]);
+  const [cloudLogs, setCloudLogs] = useState<CloudLogRow[]>([]);
+  const [cloudHasMore, setCloudHasMore] = useState(false);
+  const [cloudNextKey, setCloudNextKey] = useState<string | undefined>();
+  const [cloudCursor, setCloudCursor] = useState<string | undefined>();
+  const [cloudHistory, setCloudHistory] = useState<Array<string | undefined>>([]);
+  const [cloudWindowEnd, setCloudWindowEnd] = useState<number | undefined>();
+  const [cloudRange, setCloudRange] = useState<{ start: number; end: number } | null>(null);
+  const [cloudLoading, setCloudLoading] = useState(false);
+  const [cloudError, setCloudError] = useState<string | null>(null);
   const [firmware, setFirmware] = useState<
     Array<{
       type?: string;
@@ -78,6 +105,36 @@ export function DeviceDetailPage() {
     () => (device?.productId ? getProductDps(device.productId) : []),
     [device?.productId],
   );
+
+  const propertyCatalog = useMemo(() => {
+    const byCode = new Map<string, PropertyCatalogItem>();
+    for (const dp of productDps) {
+      byCode.set(dp.code, {
+        code: dp.code,
+        id: dp.id,
+        name: dp.name,
+        type: dp.type,
+        values: dp.values,
+      });
+    }
+    for (const fn of functions) {
+      const existing = byCode.get(fn.code);
+      const values =
+        existing?.values ??
+        (fn.values && typeof fn.values === 'object' && !Array.isArray(fn.values)
+          ? (fn.values as Record<string, unknown>)
+          : null);
+      byCode.set(fn.code, {
+        code: fn.code,
+        id: existing?.id,
+        name: existing?.name || fn.name,
+        alias: fn.alias,
+        type: existing?.type || fn.type,
+        values,
+      });
+    }
+    return [...byCode.values()];
+  }, [functions, productDps]);
 
   const bizCodeOptions = useMemo(
     () =>
@@ -102,11 +159,12 @@ export function DeviceDetailPage() {
   const loadEvents = useCallback(
     async (
       id: string,
-      filter?: { bizCodes?: string[]; dpIds?: string[]; from?: string; to?: string },
+      filter?: { bizCodes?: string[]; dpIds?: string[]; from?: string; to?: string; page?: number },
     ) => {
       const codes = filter?.bizCodes ?? [];
       const selectedDpIds = filter?.dpIds ?? [];
-      const res = await api<{ items: EventRow[]; total: number }>(
+      const page = filter?.page ?? 1;
+      const res = await api<{ items: EventRow[]; total: number; limited?: boolean }>(
         `/api/devices/${encodeURIComponent(id)}/events${qs({
           bizCodes: codes.length ? codes.join(',') : undefined,
           dpId:
@@ -115,12 +173,14 @@ export function DeviceDetailPage() {
               : undefined,
           from: filter?.from || undefined,
           to: filter?.to || undefined,
-          page: 1,
-          pageSize: 50,
+          page,
+          pageSize: EVENT_PAGE_SIZE,
         })}`,
       );
       setEvents(res.items);
       setEventsTotal(res.total);
+      setEventPage(page);
+      setEventsLimited(Boolean(res.limited));
     },
     [],
   );
@@ -146,13 +206,34 @@ export function DeviceDetailPage() {
     }
   }, []);
 
+  const loadCloudLogs = useCallback(async (id: string, opts?: { cursor?: string; end?: number }) => {
+    setCloudLoading(true);
+    try {
+      const res = await api<CloudLogPage>(
+        `/api/devices/${encodeURIComponent(id)}/cloud-logs${qs({
+          hours: CLOUD_HOURS,
+          size: CLOUD_PAGE_SIZE,
+          lastRowKey: opts?.cursor,
+          endTime: opts?.end,
+        })}`,
+      );
+      setCloudLogs(res.list ?? []);
+      setCloudHasMore(Boolean(res.hasMore && res.lastRowKey));
+      setCloudNextKey(res.lastRowKey);
+      setCloudCursor(opts?.cursor);
+      setCloudWindowEnd(opts?.end);
+      setCloudRange({ start: res.startTime, end: res.endTime });
+      setCloudError(null);
+    } catch (e) {
+      setCloudError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCloudLoading(false);
+    }
+  }, []);
+
   const loadEnrichment = useCallback(async (id: string) => {
-    setEnrichError(null);
-    const [logsResult, fwResult] = await Promise.allSettled([
-      api<{ list: Array<{ code: string; value: unknown; eventTime: number }> }>(
-        `/api/devices/${encodeURIComponent(id)}/cloud-logs${qs({ hours: 24, size: 20 })}`,
-      ),
-      api<{
+    try {
+      const fw = await api<{
         upgrades: Array<{
           type?: string;
           currentVersion?: string;
@@ -160,18 +241,10 @@ export function DeviceDetailPage() {
           upgradeStatus?: number | string;
           desc?: string;
         }>;
-      }>(`/api/devices/${encodeURIComponent(id)}/firmware`),
-    ]);
-    if (logsResult.status === 'fulfilled') {
-      setCloudLogs(logsResult.value.list ?? []);
-    }
-    if (fwResult.status === 'fulfilled') {
-      setFirmware(fwResult.value.upgrades ?? []);
-    }
-    const failed = [logsResult, fwResult].find((result) => result.status === 'rejected');
-    if (failed?.status === 'rejected') {
-      const reason = failed.reason;
-      setEnrichError(reason instanceof Error ? reason.message : String(reason));
+      }>(`/api/devices/${encodeURIComponent(id)}/firmware`);
+      setFirmware(fw.upgrades ?? []);
+    } catch (e) {
+      setEnrichError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
@@ -184,13 +257,15 @@ export function DeviceDetailPage() {
           `/api/devices/${encodeURIComponent(id)}/functions`,
         );
         setFunctions(fns);
-        await loadEvents(id, { bizCodes, dpIds, from, to });
+        setCloudHistory([]);
+        await loadEvents(id, { bizCodes, dpIds, from, to, page: 1 });
+        void loadCloudLogs(id);
         void loadEnrichment(id);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [bizCodes, dpIds, from, loadEnrichment, loadEvents, refreshStatus, to],
+    [bizCodes, dpIds, from, loadCloudLogs, loadEnrichment, loadEvents, refreshStatus, to],
   );
 
   useEffect(() => {
@@ -219,11 +294,62 @@ export function DeviceDetailPage() {
     setDpIds([]);
   }, [device?.productId]);
 
+  useEffect(() => {
+    setEventPageDraft(String(eventPage));
+  }, [eventPage]);
+
   function onFilterEvents(e: FormEvent) {
     e.preventDefault();
     if (!deviceId) return;
-    void loadEvents(deviceId, { bizCodes, dpIds, from, to });
+    void loadEvents(deviceId, { bizCodes, dpIds, from, to, page: 1 });
   }
+
+  function changeEventPage(page: number) {
+    if (!deviceId) return;
+    void loadEvents(deviceId, { bizCodes, dpIds, from, to, page });
+  }
+
+  function jumpEventPage() {
+    const parsed = Number(eventPageDraft);
+    if (!Number.isInteger(parsed)) {
+      setEventPageDraft(String(eventPage));
+      return;
+    }
+    const page = Math.min(eventPageCount, Math.max(1, parsed));
+    setEventPageDraft(String(page));
+    if (page !== eventPage) changeEventPage(page);
+  }
+
+  function goCloudNext() {
+    if (!deviceId || !cloudHasMore || !cloudNextKey) return;
+    setCloudHistory((history) => [...history, cloudCursor]);
+    void loadCloudLogs(deviceId, { cursor: cloudNextKey, end: cloudWindowEnd });
+  }
+
+  function goCloudPrev() {
+    if (!deviceId || cloudHistory.length === 0) return;
+    const prev = cloudHistory[cloudHistory.length - 1];
+    setCloudHistory((history) => history.slice(0, -1));
+    void loadCloudLogs(deviceId, { cursor: prev, end: cloudWindowEnd });
+  }
+
+  function goCloudEarlier() {
+    if (!deviceId) return;
+    const end = cloudRange?.start ?? Date.now() - CLOUD_HOURS * 3600_000;
+    setCloudHistory([]);
+    void loadCloudLogs(deviceId, { end });
+  }
+
+  function goCloudLatest() {
+    if (!deviceId) return;
+    setCloudHistory([]);
+    void loadCloudLogs(deviceId);
+  }
+
+  const eventPageCount = Math.max(1, Math.ceil(eventsTotal / EVENT_PAGE_SIZE));
+  const cloudHint = cloudRange
+    ? `${new Date(cloudRange.start).toLocaleString()} – ${new Date(cloudRange.end).toLocaleString()} · 本页 ${cloudLogs.length} 条`
+    : '近 7 天 · 数据上报';
 
   const faultText =
     device?.faultStatus === 'fault' ? '故障' : device?.faultStatus === 'normal' ? '正常' : '未知';
@@ -369,10 +495,11 @@ export function DeviceDetailPage() {
             <section className="card">
               <h2>
                 云端上报日志
-                <span className="hint">近 24h · 数据上报</span>
+                <span className="hint">{cloudHint}</span>
               </h2>
+              {cloudError && <p className="warn">{cloudError}</p>}
               {cloudLogs.length === 0 ? (
-                <p className="hint">暂无云端日志</p>
+                <p className="hint">{cloudLoading ? '加载中' : '这个时间窗里没有上报'}</p>
               ) : (
                 <div className="table-wrap device-log-scroll">
                   <table className="data">
@@ -397,12 +524,45 @@ export function DeviceDetailPage() {
                   </table>
                 </div>
               )}
+              <div className="log-pager">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={cloudHistory.length === 0 || cloudLoading}
+                  onClick={goCloudPrev}
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!cloudHasMore || cloudLoading}
+                  onClick={goCloudNext}
+                >
+                  下一页
+                </button>
+                <button type="button" className="btn" disabled={cloudLoading} onClick={goCloudEarlier}>
+                  更早 7 天
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={cloudWindowEnd == null || cloudLoading}
+                  onClick={goCloudLatest}
+                >
+                  回到最近
+                </button>
+              </div>
             </section>
           </div>
 
           <div className="card">
             <h2>
-              设备日志 <span className="hint">共 {eventsTotal} 条 · 本地消息队列</span>
+              设备日志{' '}
+              <span className="hint">
+                共 {eventsTotal} 条 · 第 {eventPage}/{eventPageCount} 页 · 本地消息队列
+                {eventsLimited ? ' · 功能点筛选只查最近 500 条' : ''}
+              </span>
             </h2>
             <div className="row gap" style={{ marginBottom: '0.55rem' }}>
               <label className="muted" style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
@@ -458,23 +618,40 @@ export function DeviceDetailPage() {
                   <tr>
                     <th>时间</th>
                     <th>bizCode</th>
+                    <th>属性</th>
                     <th>payload</th>
                   </tr>
                 </thead>
                 <tbody>
                   {events.length === 0 ? (
                     <tr>
-                      <td colSpan={3} className="muted">
+                      <td colSpan={4} className="muted">
                         暂无日志
                       </td>
                     </tr>
                   ) : (
                     events.map((ev) => (
                       <tr key={ev.id} className="no-click">
-                        <td style={{ whiteSpace: 'nowrap' }}>
+                        <td className="log-time">
                           {new Date(ev.eventTime).toLocaleString()}
                         </td>
-                        <td>{formatBizCodeLabel(ev.bizCode)}</td>
+                        <td className="log-biz">{formatBizCodeLabel(ev.bizCode)}</td>
+                        <td className="log-props-cell">
+                          {(() => {
+                            const lines = eventPropertyLines(ev.payload, propertyCatalog);
+                            if (lines.length === 0) return <span className="muted">—</span>;
+                            return (
+                              <ul className="log-props">
+                                {lines.map((line, index) => (
+                                  <li key={`${line.name}-${index}`}>
+                                    <span>{line.name}</span>
+                                    <span className="num">{line.value}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            );
+                          })()}
+                        </td>
                         <td>
                           <pre
                             className={`log-payload mono${prettyPayload ? '' : ' log-payload-compact'}`}
@@ -487,6 +664,44 @@ export function DeviceDetailPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="log-pager">
+              <button
+                type="button"
+                className="btn"
+                disabled={eventPage <= 1}
+                onClick={() => changeEventPage(eventPage - 1)}
+              >
+                上一页
+              </button>
+              <label className="log-page-jump">
+                页码
+                <input
+                  type="number"
+                  min={1}
+                  max={eventPageCount}
+                  inputMode="numeric"
+                  aria-label="设备日志页码"
+                  value={eventPageDraft}
+                  onChange={(e) => setEventPageDraft(e.target.value)}
+                  onBlur={jumpEventPage}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      jumpEventPage();
+                    }
+                  }}
+                />
+                <span>/ {eventPageCount}</span>
+              </label>
+              <button
+                type="button"
+                className="btn"
+                disabled={eventPage >= eventPageCount}
+                onClick={() => changeEventPage(eventPage + 1)}
+              >
+                下一页
+              </button>
             </div>
           </div>
         </>

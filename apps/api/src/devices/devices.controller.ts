@@ -36,11 +36,15 @@ export class DevicesController {
     @Query('codes') codes?: string,
     @Query('hours') hours?: string,
     @Query('size') size?: string,
+    @Query('lastRowKey') lastRowKey?: string,
+    @Query('endTime') endTime?: string,
   ) {
     return this.devicesService.getCloudReportLogs(deviceId, {
       codes,
       hours: hours ? Number(hours) : undefined,
       size: size ? Number(size) : undefined,
+      lastRowKey,
+      endTime: endTime ? Number(endTime) : undefined,
     });
   }
 

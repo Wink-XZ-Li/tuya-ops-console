@@ -836,6 +836,57 @@ table.data tbody tr.no-click {
   white-space: pre-wrap;
 }
 
+.log-pager {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+}
+
+.log-page-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.log-page-jump input {
+  width: 4.2rem;
+  min-height: 32px;
+  padding: 0 0.35rem;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.log-time,
+.log-biz,
+.log-props-cell {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.log-props {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.log-props li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.25rem;
+  white-space: nowrap;
+}
+
 .status-online {
   color: var(--badge-live);
   font-weight: 600;

@@ -195,22 +195,25 @@ export class DevicesService {
 
   async getCloudReportLogs(
     deviceId: string,
-    params: { codes?: string; hours?: number; size?: number },
+    params: { codes?: string; hours?: number; size?: number; lastRowKey?: string; endTime?: number },
   ) {
     const device = await this.prisma.device.findUnique({ where: { deviceId } });
     if (!device) {
       throw new NotFoundException(`Device ${deviceId} not found`);
     }
-    const endTime = Date.now();
-    const hours = Math.min(Math.max(params.hours ?? 24, 1), 168);
+    const hours = Math.min(Math.max(params.hours ?? 168, 1), 168);
+    const endTime =
+      params.endTime != null && Number.isFinite(params.endTime) ? params.endTime : Date.now();
     const startTime = endTime - hours * 3600_000;
-    return this.tuya.getDeviceReportLogs({
+    const page = await this.tuya.getDeviceReportLogs({
       deviceId,
       codes: params.codes?.trim() || '',
       startTime,
       endTime,
-      size: Math.min(params.size ?? 20, 100),
+      size: Math.min(params.size ?? 50, 100),
+      lastRowKey: params.lastRowKey?.trim() || undefined,
     });
+    return { ...page, startTime, endTime };
   }
 
   async getFirmware(deviceId: string) {
@@ -273,9 +276,10 @@ export class DevicesService {
       const candidates = await this.prisma.deviceEvent.findMany({
         where,
         orderBy: { eventTime: 'desc' },
-        take: 500,
+        take: 501,
       });
-      const filtered = candidates.filter((e) =>
+      const limited = candidates.length > 500;
+      const filtered = (limited ? candidates.slice(0, 500) : candidates).filter((e) =>
         dpIds.some((id) => payloadMatchesDpId(e.payload, id)),
       );
       const total = filtered.length;
@@ -291,6 +295,7 @@ export class DevicesService {
         total,
         page,
         pageSize,
+        limited,
       };
     }
 
