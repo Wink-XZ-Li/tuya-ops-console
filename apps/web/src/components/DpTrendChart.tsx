@@ -20,7 +20,7 @@ export type DpTrendFault = {
 
 const COLORS = ['#1b6c80', '#1e7b4f', '#b45309', '#3b4da3', '#9f1239', '#0f766e', '#7c3aed', '#57534e'];
 
-const PAD = { top: 16, right: 16, bottom: 28, left: 48 };
+const PAD = { top: 16, right: 16, bottom: 36, left: 48 };
 
 type Props = {
   series: DpTrendSeries;
@@ -160,6 +160,25 @@ export function DpTrendChart({ series, from, to, faults, colorIndex = 0 }: Props
           <g>
             <TrendRun run={points} color={color} name={series.name} xAt={xAt} yAt={yAt} />
           </g>
+          <line
+            className="dp-trend-x-axis"
+            x1={PAD.left}
+            x2={width - PAD.right}
+            y1={PAD.top + plotH}
+            y2={PAD.top + plotH}
+          />
+          {xTicks(fromMs, toMs, plotW).map((tick, index, all) => (
+            <text
+              key={tick}
+              className="trend-axis dp-trend-x"
+              data-t={new Date(tick).toISOString()}
+              x={xAt(tick)}
+              y={height - 8}
+              textAnchor={index === 0 ? 'start' : index === all.length - 1 ? 'end' : 'middle'}
+            >
+              {formatAxisTime(tick, toMs - fromMs)}
+            </text>
+          ))}
         </svg>
       )}
       {hoverT && hoverPoint && (
@@ -230,6 +249,23 @@ function TrendRun({
 
 function pair(x: number, y: number): string {
   return `${x.toFixed(1)},${y.toFixed(1)}`;
+}
+
+function xTicks(fromMs: number, toMs: number, plotW: number): number[] {
+  const count = plotW < 280 ? 2 : plotW < 480 ? 3 : 4;
+  const span = Math.max(0, toMs - fromMs);
+  return Array.from({ length: count }, (_, index) =>
+    index === count - 1 ? toMs : fromMs + (span * index) / (count - 1),
+  );
+}
+
+function formatAxisTime(ms: number, spanMs: number): string {
+  const date = new Date(ms);
+  const day = `${date.getMonth() + 1}/${date.getDate()}`;
+  if (spanMs > 2 * 24 * 60 * 60 * 1000) return day;
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${day} ${hh}:${mm}`;
 }
 
 function formatTick(value: number): string {

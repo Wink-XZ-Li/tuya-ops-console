@@ -53,5 +53,10 @@ describe('dp trend selection memory', () => {
     expect(isHiddenTrendDp({ code: 'steam_cook_temp', name: '蒸箱温度设置' })).toBe(true);
     expect(isHiddenTrendDp({ code: 'temp_current', name: '当前温度' })).toBe(false);
     expect(isHiddenTrendDp({ code: 'steam_temp_current', name: '蒸箱当前温度' })).toBe(false);
+    expect(isHiddenTrendDp({ code: 'gas_consumption', name: '耗气量' })).toBe(true);
+    expect(isHiddenTrendDp({ code: 'runtime', name: '运行时间' })).toBe(true);
+    expect(isHiddenTrendDp({ code: 'water_total', name: '净水总量' })).toBe(true);
+    expect(isHiddenTrendDp({ code: 'water_outlet', name: '产水量' })).toBe(true);
+    expect(isHiddenTrendDp({ code: 'water_flow', name: '水流量' })).toBe(false);
   });
 });

@@ -21,6 +21,9 @@ const schema = [
   { id: 9, code: 'temp_set', name: '目标温度', type: 'value', values: { scale: 0, unit: '℃' } },
   { id: 45, code: 'steam_cook_temp', name: '蒸箱温度设置', type: 'value', values: { scale: 0, unit: '℃' } },
   { id: 19, code: 'upper_temp', name: '设置温度上限', type: 'value', values: { scale: 0, unit: '℃' } },
+  { id: 14, code: 'gas_consumption', name: '耗气量', type: 'value', values: { scale: 1, unit: 'm³' } },
+  { id: 105, code: 'runtime', name: '运行时间', type: 'value', values: { scale: 0, unit: '分钟' } },
+  { id: 25, code: 'water_total', name: '净水总量', type: 'value', values: { scale: 0, unit: 'L' } },
 ];
 
 describe('dp trend buckets', () => {
@@ -182,6 +185,44 @@ describe('dp trend aggregation', () => {
       schema,
       defaults: [],
       requested: ['9', '45', '19', 'temp'],
+      from,
+      to,
+      bucket: '1h',
+    });
+    expect(explicit.map((series) => series.dpId)).toEqual(['temp']);
+  });
+
+  it('keeps usage counters out of defaults, top 3, and explicit requests', () => {
+    const events = [
+      ...Array.from({ length: 8 }, () => ({
+        eventTime: from,
+        payload: {
+          status: [
+            { code: 'gas_consumption', value: 120 },
+            { code: 'runtime', value: 30 },
+            { code: 'water_total', value: 50 },
+          ],
+        },
+      })),
+      { eventTime: from, payload: { status: [{ code: 'temp', value: 400 }] } },
+      { eventTime: from, payload: { status: [{ dpId: 14, value: 130 }] } },
+    ];
+    const top = buildDpTrends({
+      events,
+      schema,
+      defaults: ['gas_consumption', 'runtime', 'water_total'],
+      requested: [],
+      from,
+      to,
+      bucket: '1h',
+    });
+    expect(top.map((series) => series.dpId)).toEqual(['temp']);
+
+    const explicit = buildDpTrends({
+      events,
+      schema,
+      defaults: [],
+      requested: ['14', '105', '25', 'temp'],
       from,
       to,
       bucket: '1h',

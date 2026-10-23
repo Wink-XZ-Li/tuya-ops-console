@@ -65,6 +65,8 @@ function isWritable(fn: DeviceFunction): boolean {
   return mode.includes('w') || mode === 'rw' || mode === 'wr';
 }
 
+const STATUS_PREVIEW_ROWS = 10;
+
 export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent }: Props) {
   const rows = useMemo(() => {
     const byCode = new Map<string, DeviceFunction>();
@@ -93,6 +95,7 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
   const [busyCode, setBusyCode] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     setDrafts((prev) => {
@@ -132,6 +135,8 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
   }
 
   const showId = rows.some((row) => row.sortOrder !== Number.MAX_SAFE_INTEGER);
+  const visible = showAll ? rows : rows.slice(0, STATUS_PREVIEW_ROWS);
+  const hiddenCount = rows.length - visible.length;
 
   return (
     <div>
@@ -147,7 +152,7 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => {
+            {visible.map((row) => {
               const fn = row.fn;
               const type = (fn?.type ?? 'string').toLowerCase();
               const parsed = parseValues(fn?.values);
@@ -254,6 +259,16 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
           </tbody>
         </table>
       </div>
+      {hiddenCount > 0 && (
+        <button type="button" className="btn status-more" onClick={() => setShowAll(true)}>
+          展开更多（{hiddenCount}）
+        </button>
+      )}
+      {showAll && rows.length > STATUS_PREVIEW_ROWS && (
+        <button type="button" className="btn status-more" onClick={() => setShowAll(false)}>
+          收起
+        </button>
+      )}
       {message && <p className="muted">{message}</p>}
       {error && <p className="error">{error}</p>}
     </div>

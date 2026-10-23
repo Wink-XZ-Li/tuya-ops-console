@@ -59,6 +59,18 @@ const series = [
       { t: '2026-10-20T02:00:00.000Z', avg: 46, min: 46, max: 46 },
     ],
   },
+  {
+    dpId: 'gas_consumption',
+    name: '耗气量',
+    unit: 'm³',
+    points: [{ t: '2026-10-20T00:00:00.000Z', avg: 3, min: 3, max: 3 }],
+  },
+  {
+    dpId: 'runtime',
+    name: '运行时间',
+    unit: '分钟',
+    points: [{ t: '2026-10-20T00:00:00.000Z', avg: 12, min: 12, max: 12 }],
+  },
 ];
 
 describe('DpTrendPanel', () => {
@@ -150,9 +162,20 @@ describe('DpTrendPanel', () => {
     expect(band?.getAttribute('points')?.trim().split(/\s+/)).toHaveLength(4);
     expect(series?.querySelector('path')).toBeNull();
     expect(series?.querySelectorAll('.dp-trend-line')).toHaveLength(1);
+    for (const chart of [series, other]) {
+      const ticks = chart?.querySelectorAll('.dp-trend-x') ?? [];
+      expect(ticks.length).toBeGreaterThanOrEqual(2);
+      expect(ticks[0]?.getAttribute('data-t')).toBe('2026-10-16T00:00:00.000Z');
+      expect(ticks[ticks.length - 1]?.getAttribute('data-t')).toBe('2026-10-23T00:00:00.000Z');
+      expect(ticks[0]?.textContent?.trim()).not.toBe('');
+    }
     expect(document.querySelector('[data-dp="ph"]')).toBeNull();
     expect(document.querySelector('[data-dp="lhd"]')).toBeNull();
     expect(document.querySelector('[data-dp="temp_set"]')).toBeNull();
+    expect(document.querySelector('[data-dp="gas_consumption"]')).toBeNull();
+    expect(document.querySelector('[data-dp="runtime"]')).toBeNull();
+    expect(screen.queryByText(/耗气量/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/运行时间/)).not.toBeInTheDocument();
     expect(screen.queryByText(/PH采暖/)).not.toBeInTheDocument();
     expect(screen.queryByText(/LH-D/)).not.toBeInTheDocument();
     expect(screen.queryByText(/目标温度/)).not.toBeInTheDocument();

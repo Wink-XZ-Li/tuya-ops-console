@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeviceDetailPage } from './DeviceDetailPage';
@@ -79,5 +79,14 @@ describe('DeviceDetailPage fault history placement', () => {
     expect(trends.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关单' })).not.toBeInTheDocument();
+
+    const toggle = screen.getByRole('button', { name: '展开状态集' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('暂无状态点')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: '自动刷新' })).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByRole('button', { name: '收起状态集' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('暂无状态点')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '自动刷新' })).toBeInTheDocument();
   });
 });

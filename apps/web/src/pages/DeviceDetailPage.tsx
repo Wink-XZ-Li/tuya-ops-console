@@ -76,6 +76,7 @@ export function DeviceDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [statusOpen, setStatusOpen] = useState(false);
   const [cloudLogs, setCloudLogs] = useState<CloudLogRow[]>([]);
   const [cloudHasMore, setCloudHasMore] = useState(false);
   const [cloudNextKey, setCloudNextKey] = useState<string | undefined>();
@@ -425,7 +426,7 @@ export function DeviceDetailPage() {
             </div>
           </section>
 
-          <section className="card">
+          <section className="card" aria-label="状态集">
             <div className="section-bar">
               <h2>
                 状态集
@@ -435,32 +436,48 @@ export function DeviceDetailPage() {
                 </span>
               </h2>
               <div className="row gap">
-                <label className="muted check-label">
-                  <input
-                    type="checkbox"
-                    checked={autoRefresh}
-                    onChange={(e) => setAutoRefresh(e.target.checked)}
-                  />
-                  自动刷新
-                </label>
+                {statusOpen && (
+                  <>
+                    <label className="muted check-label">
+                      <input
+                        type="checkbox"
+                        checked={autoRefresh}
+                        onChange={(e) => setAutoRefresh(e.target.checked)}
+                      />
+                      自动刷新
+                    </label>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => deviceId && void refreshStatus(deviceId)}
+                    >
+                      立即刷新
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
-                  className="btn secondary"
-                  onClick={() => deviceId && void refreshStatus(deviceId)}
+                  className="btn"
+                  aria-expanded={statusOpen}
+                  onClick={() => setStatusOpen((open) => !open)}
                 >
-                  立即刷新
+                  {statusOpen ? '收起状态集' : '展开状态集'}
                 </button>
               </div>
             </div>
-            {readonly && <p className="muted">只读角色不可下发指令</p>}
-            <StatusPanel
-              key={device.deviceId}
-              deviceId={device.deviceId}
-              functions={functions}
-              statusJson={(device.statusJson as Record<string, unknown>) ?? {}}
-              disabled={readonly}
-              onSent={() => void refreshStatus(device.deviceId)}
-            />
+            {statusOpen && (
+              <>
+                {readonly && <p className="muted">只读角色不可下发指令</p>}
+                <StatusPanel
+                  key={device.deviceId}
+                  deviceId={device.deviceId}
+                  functions={functions}
+                  statusJson={(device.statusJson as Record<string, unknown>) ?? {}}
+                  disabled={readonly}
+                  onSent={() => void refreshStatus(device.deviceId)}
+                />
+              </>
+            )}
           </section>
 
           <FaultHistoryPanel deviceId={device.deviceId} />

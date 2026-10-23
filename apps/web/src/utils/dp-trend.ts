@@ -50,6 +50,27 @@ const NON_TREND_DP_CODES = new Set([
   'od',
 ]);
 
+/** Cumulative usage counters. Schema has no「好水」; totals are water_total / water_outlet. */
+const USAGE_STAT_CODES = new Set([
+  'gas_consumption',
+  'water_total',
+  'water_consumption',
+  'water_consumption_1',
+  'water_outlet',
+  'power_consumption',
+  'power_consumption_1',
+  'cur_power_stats',
+  'runtime',
+  'usage_time',
+  'total_usage_time',
+  'usage_count',
+  'operating_days',
+  'regeneration_water',
+  'daily_statistics',
+  'weekly_statistics',
+  'monthly_statistics',
+]);
+
 /** Setpoint temperatures from PRODUCT_DP_SCHEMAS.json. Measured temps such as steam_temp_current stay. */
 const SETPOINT_TEMP_CODES = new Set([
   'temp_set',
@@ -77,12 +98,21 @@ const SETPOINT_TEMP_CODES = new Set([
 
 export function isHiddenTrendDp(dp: { code: string; name?: string | null }): boolean {
   const code = dp.code.trim().toLowerCase();
-  if (NON_TREND_DP_CODES.has(code) || SETPOINT_TEMP_CODES.has(code)) return true;
+  if (NON_TREND_DP_CODES.has(code) || SETPOINT_TEMP_CODES.has(code) || USAGE_STAT_CODES.has(code)) {
+    return true;
+  }
   const name = dp.name?.trim() ?? '';
   if (!name) return false;
   if (/^ph(?![a-z])/i.test(name) && /比例阀|电流/.test(name)) return true;
   if (/lh-?d/i.test(name) && /比例阀|电流|大气/.test(name)) return true;
   if (/目标温度|设置温度|温度设置|水温设置/.test(name)) return true;
+  if (
+    /耗气|用气量|耗水|用水量|耗电|净水总量|产水量|再生用水|运行时间|使用时长|使用时间|使用次数|运行天数|电量统计/.test(
+      name,
+    )
+  ) {
+    return true;
+  }
   return false;
 }
 

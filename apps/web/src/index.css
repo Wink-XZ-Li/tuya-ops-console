@@ -1504,6 +1504,15 @@ table.data tbody tr.no-click {
   text-decoration: line-through;
 }
 
+.status-more {
+  margin-top: 0.65rem;
+}
+
+.dp-trend-x-axis {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
 .dp-trend-line {
   fill: none;
   stroke-width: 1.75;
