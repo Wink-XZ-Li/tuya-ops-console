@@ -3,6 +3,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { DevicesService } from './devices.service';
+import { ConnectivityQueryDto } from './dto/connectivity.dto';
 import { DpTrendsQueryDto } from './dto/dp-trends.dto';
 import { FaultHistoryQueryDto } from './dto/fault-history.dto';
 import { UsageQueryDto } from './dto/usage.dto';
@@ -73,6 +74,12 @@ export class DevicesController {
   @Roles('readonly', 'operator', 'admin')
   usage(@Param('deviceId') deviceId: string, @Query() query: UsageQueryDto) {
     return this.devicesService.usage(deviceId, query);
+  }
+
+  @Get(':deviceId/connectivity')
+  @Roles('readonly', 'operator', 'admin')
+  connectivity(@Param('deviceId') deviceId: string, @Query() query: ConnectivityQueryDto) {
+    return this.devicesService.connectivity(deviceId, query);
   }
 
   @Get(':deviceId')

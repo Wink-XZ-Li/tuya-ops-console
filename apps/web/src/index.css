@@ -1670,3 +1670,77 @@ table.data tbody tr.no-click {
 .usage-note {
   margin-top: 0.6rem;
 }
+
+.connectivity-legend {
+  display: flex;
+  gap: 0.9rem;
+  margin: 0 0 0.7rem;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.connectivity-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.connectivity-swatch.is-online,
+.connectivity-seg.is-online {
+  background: var(--positive);
+}
+
+.connectivity-swatch.is-offline,
+.connectivity-seg.is-offline {
+  background: #8d949b;
+}
+
+.connectivity-swatch.is-unknown,
+.connectivity-seg.is-unknown {
+  background: #e6eaee;
+}
+
+.connectivity-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.connectivity-summary {
+  margin: 0 0 0.45rem;
+}
+
+.connectivity-chart {
+  position: relative;
+}
+
+.connectivity-bar {
+  display: flex;
+  align-items: stretch;
+  height: 28px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #e6eaee;
+}
+
+.connectivity-seg {
+  flex: 1 1 0;
+  min-width: 4px;
+  height: 100%;
+}
+
+.connectivity-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.connectivity-tip {
+  top: -2.2rem;
+  transform: translateX(-50%);
+}

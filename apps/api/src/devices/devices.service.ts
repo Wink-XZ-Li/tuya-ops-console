@@ -36,6 +36,7 @@ import {
 } from './dp-trends';
 import { buildUsage, usageBucketForRange, type UsageBucket } from './usage';
 import { usageMetricsForProduct } from './usage-metrics';
+import { CONNECTIVITY_BIZ_CODES, buildConnectivityTimeline } from './connectivity';
 
 export interface ListDevicesParams {
   q?: string;
@@ -351,6 +352,58 @@ export class DevicesService {
       from: from.toISOString(),
       to: to.toISOString(),
       ...buildUsage({ samples, from, to, mode: metric.mode, bucket }),
+    };
+  }
+
+  /**
+   * Online/offline ribbon from DeviceEvent connectivity bizCodes.
+   * Offline alerts are not used: they open only after a delay and miss short drops.
+   */
+  async connectivity(
+    deviceId: string,
+    query: { from?: string; to?: string },
+    now = new Date(),
+  ) {
+    const device = await this.prisma.device.findUnique({
+      where: { deviceId },
+      select: { id: true },
+    });
+    if (!device) {
+      throw new NotFoundException(`Device ${deviceId} not found`);
+    }
+
+    const to = parseHistoryInstant(query.to, '结束时间') ?? now;
+    const from = parseHistoryInstant(query.from, '开始时间') ?? new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (from.getTime() >= to.getTime()) {
+      throw new BadRequestException('开始时间不能晚于结束时间');
+    }
+    if (to.getTime() - from.getTime() > TREND_MAX_RANGE_MS) {
+      throw new BadRequestException('区间不能超过 90 天');
+    }
+
+    const bizCode = { in: [...CONNECTIVITY_BIZ_CODES] };
+    const prior = await this.prisma.deviceEvent.findFirst({
+      where: { deviceId: device.id, eventTime: { lt: from }, bizCode },
+      orderBy: { eventTime: 'desc' },
+      select: { bizCode: true, eventTime: true },
+    });
+    const events = await this.prisma.deviceEvent.findMany({
+      where: { deviceId: device.id, eventTime: { gte: from, lte: to }, bizCode },
+      orderBy: { eventTime: 'asc' },
+      select: { bizCode: true, eventTime: true },
+      take: 4000,
+    });
+
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      source: 'deviceEvent' as const,
+      ...buildConnectivityTimeline({
+        from,
+        to,
+        prior: prior ? { t: prior.eventTime.getTime(), bizCode: prior.bizCode } : null,
+        events: events.map((event) => ({ t: event.eventTime.getTime(), bizCode: event.bizCode })),
+      }),
     };
   }
 

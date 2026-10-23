@@ -6,6 +6,7 @@ import { DpTrendPanel } from '../components/DpTrendPanel';
 import { FaultHistoryPanel } from '../components/FaultHistoryPanel';
 import { MultiSelect } from '../components/MultiSelect';
 import { StatusPanel } from '../components/StatusPanel';
+import { ConnectivityPanel } from '../components/ConnectivityPanel';
 import { UsagePanel } from '../components/UsagePanel';
 import { getRole } from '../auth/storage';
 import {
@@ -484,6 +485,7 @@ export function DeviceDetailPage() {
           <FaultHistoryPanel deviceId={device.deviceId} />
           <DpTrendPanel deviceId={device.deviceId} productId={device.productId} />
           <UsagePanel deviceId={device.deviceId} productId={device.productId} />
+          <ConnectivityPanel deviceId={device.deviceId} />
 
           <div className="device-split">
             <section className="card">
@@ -580,7 +582,7 @@ export function DeviceDetailPage() {
             </section>
           </div>
 
-          <div className="card">
+          <div className="card" id="device-logs">
             <h2>
               设备日志{' '}
               <span className="hint">

@@ -333,4 +333,49 @@ describe('DevicesService', () => {
 
     await expect(svc.usage('vdevo1', { metric: 'energy' })).rejects.toThrow('该产品没有这项用量');
   });
+
+  it('builds the connectivity ribbon from online and offline device events, not alerts', async () => {
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1' }),
+      },
+      deviceEvent: {
+        findFirst: jest.fn().mockResolvedValue({
+          bizCode: 'deviceOnline',
+          eventTime: new Date('2026-10-15T00:00:00.000Z'),
+        }),
+        findMany: jest.fn().mockResolvedValue([
+          { bizCode: 'offline', eventTime: new Date('2026-10-20T00:00:00.000Z') },
+          { bizCode: 'online', eventTime: new Date('2026-10-20T02:00:00.000Z') },
+        ]),
+      },
+      alert: { findMany: jest.fn() },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const page = await svc.connectivity('vdevo1', {
+      from: '2026-10-16T00:00:00.000Z',
+      to: '2026-10-23T00:00:00.000Z',
+    });
+
+    expect(prisma.deviceEvent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          deviceId: 'internal-1',
+          eventTime: { lt: new Date('2026-10-16T00:00:00.000Z') },
+          bizCode: { in: ['online', 'deviceOnline', 'offline', 'deviceOffline'] },
+        }),
+      }),
+    );
+    expect(prisma.alert.findMany).not.toHaveBeenCalled();
+    expect(page.source).toBe('deviceEvent');
+    expect(page.segments.map((segment) => segment.state)).toEqual(['online', 'offline', 'online']);
+    expect(page.segments[1]).toEqual({
+      state: 'offline',
+      from: '2026-10-20T00:00:00.000Z',
+      to: '2026-10-20T02:00:00.000Z',
+    });
+
+    prisma.device.findUnique.mockResolvedValue(null);
+    await expect(svc.connectivity('missing', {})).rejects.toThrow('Device missing not found');
+  });
 });

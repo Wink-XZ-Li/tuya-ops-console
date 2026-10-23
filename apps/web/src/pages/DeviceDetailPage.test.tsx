@@ -76,7 +76,10 @@ describe('DeviceDetailPage fault history placement', () => {
     const firmware = screen.getByRole('heading', { name: '固件' });
     expect(status.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(history.compareDocumentPosition(trends) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(trends.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const online = await screen.findByRole('region', { name: '在线状态' });
+    expect(trends.compareDocumentPosition(online) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(online.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(history.contains(online)).toBe(false);
     expect(screen.queryByRole('region', { name: '用量' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关单' })).not.toBeInTheDocument();
@@ -134,9 +137,11 @@ describe('DeviceDetailPage fault history placement', () => {
 
     const trends = await screen.findByRole('region', { name: '参数走势' });
     const usage = await screen.findByRole('region', { name: '用量' });
+    const online = await screen.findByRole('region', { name: '在线状态' });
     const firmware = screen.getByRole('heading', { name: '固件' });
     expect(trends.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(usage.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(usage.compareDocumentPosition(online) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(online.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(await screen.findByText('本区间合计 1 G')).toBeInTheDocument();
   });
 });
