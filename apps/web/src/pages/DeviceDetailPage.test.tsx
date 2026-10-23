@@ -43,6 +43,14 @@ describe('DeviceDetailPage fault history placement', () => {
           nextCursor: null,
         };
       }
+      if (path.includes('/dp-trends')) {
+        return {
+          from: '2026-10-16T00:00:00.000Z',
+          to: '2026-10-23T00:00:00.000Z',
+          bucket: '1h',
+          series: [],
+        };
+      }
       if (path.includes('/functions')) return [];
       if (path.includes('/events')) return { items: [], total: 0 };
       if (path.includes('/cloud-logs')) {
@@ -63,10 +71,12 @@ describe('DeviceDetailPage fault history placement', () => {
     );
 
     const history = await screen.findByRole('region', { name: '历史故障' });
+    const trends = await screen.findByRole('region', { name: '参数走势' });
     const status = screen.getByRole('heading', { name: /状态集/ });
     const firmware = screen.getByRole('heading', { name: '固件' });
     expect(status.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(history.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(history.compareDocumentPosition(trends) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(trends.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关单' })).not.toBeInTheDocument();
   });

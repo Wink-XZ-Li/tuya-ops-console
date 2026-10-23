@@ -10,6 +10,8 @@ import {
   deriveSignalStrength,
   statusFromPairs,
 } from './device-derived';
+import { defaultTrendDps } from './default-trend-dps';
+import { getProductDps } from './product-dp-schemas';
 import {
   type FaultHistoryRow,
   closedReasonLabel,
@@ -20,6 +22,16 @@ import {
   selectFaultHistory,
   summarizeFaultHistory,
 } from './fault-history';
+import {
+  type TrendBucket,
+  TREND_MAX_RANGE_MS,
+  TREND_PROPERTY_BIZ_CODES,
+  bucketForRange,
+  buildDpTrends,
+  needsReportCounts,
+  resolveDpToken,
+  trendCountWindow,
+} from './dp-trends';
 
 export interface ListDevicesParams {
   q?: string;
@@ -47,6 +59,13 @@ export interface FaultHistoryParams {
   includeConnectivity?: string;
   cursor?: string;
   focus?: 'open' | 'opened';
+}
+
+export interface DpTrendsParams {
+  dpIds?: string;
+  from?: string;
+  to?: string;
+  bucket?: TrendBucket;
 }
 
 @Injectable()
@@ -207,6 +226,68 @@ export class DevicesService {
       }),
       summary,
       nextCursor: page.nextCursor,
+    };
+  }
+
+  /** Numeric DP buckets from stored property events. Empty hours are omitted, not filled with 0. */
+  async dpTrends(deviceId: string, query: DpTrendsParams, now = new Date()) {
+    const device = await this.prisma.device.findUnique({
+      where: { deviceId },
+      select: { id: true, productId: true },
+    });
+    if (!device) {
+      throw new NotFoundException(`Device ${deviceId} not found`);
+    }
+
+    const to = parseHistoryInstant(query.to, '结束时间') ?? now;
+    const from = parseHistoryInstant(query.from, '开始时间') ?? new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (from.getTime() > to.getTime()) {
+      throw new BadRequestException('开始时间不能晚于结束时间');
+    }
+    if (to.getTime() - from.getTime() > TREND_MAX_RANGE_MS) {
+      throw new BadRequestException('区间不能超过 90 天');
+    }
+
+    const schema = getProductDps(device.productId);
+    const requested = (query.dpIds ?? '')
+      .split(',')
+      .map((token) => resolveDpToken(token, schema))
+      .filter(Boolean);
+    const defaults = defaultTrendDps(device.productId).map((token) => resolveDpToken(token, schema));
+    const numericCodes =
+      schema.length > 0
+        ? new Set(schema.filter((dp) => dp.type === 'value').map((dp) => dp.code))
+        : null;
+    const bucket = query.bucket ?? bucketForRange(to.getTime() - from.getTime());
+    const loadFrom = trendCountWindow(
+      from,
+      to,
+      needsReportCounts(requested, defaults, numericCodes),
+    );
+
+    const events = await this.prisma.deviceEvent.findMany({
+      where: {
+        deviceId: device.id,
+        eventTime: { gte: loadFrom, lte: to },
+        bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
+      },
+      select: { payload: true, eventTime: true },
+      orderBy: { eventTime: 'asc' },
+    });
+
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      bucket,
+      series: buildDpTrends({
+        events,
+        schema,
+        defaults,
+        requested,
+        from,
+        to,
+        bucket,
+      }),
     };
   }
 

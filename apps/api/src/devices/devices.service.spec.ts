@@ -215,4 +215,80 @@ describe('DevicesService', () => {
       symptom: null,
     });
   });
+
+  it('aggregates numeric DP trends and leaves gaps empty', async () => {
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'internal-1',
+          productId: '0wyzpxylwzjx6gej',
+        }),
+      },
+      deviceEvent: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            eventTime: new Date('2026-10-22T00:10:00.000Z'),
+            payload: {
+              status: [
+                { code: 'steam_temp_current', value: 40 },
+                { code: 'steam_temp_current', value: 50 },
+                { code: 'wash_switch', value: true },
+                { code: 'fault', value: 4 },
+              ],
+            },
+          },
+          {
+            eventTime: new Date('2026-10-22T02:00:00.000Z'),
+            payload: { status: [{ code: 'steam_temp_current', value: 42 }] },
+          },
+        ]),
+      },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const page = await svc.dpTrends('vdevo1', {
+      dpIds: 'steam_temp_current',
+      from: '2026-10-22T00:00:00.000Z',
+      to: '2026-10-22T03:00:00.000Z',
+      bucket: '1h',
+    });
+
+    expect(page.bucket).toBe('1h');
+    expect(page.series).toEqual([
+      {
+        dpId: 'steam_temp_current',
+        name: '蒸箱当前温度',
+        unit: '℃',
+        points: [
+          { t: '2026-10-22T00:00:00.000Z', avg: 45, min: 40, max: 50 },
+          { t: '2026-10-22T02:00:00.000Z', avg: 42, min: 42, max: 42 },
+        ],
+      },
+    ]);
+    expect(prisma.deviceEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          deviceId: 'internal-1',
+          bizCode: { in: ['devicePropertyMessage', 'property', 'devicePropertyChange'] },
+        }),
+      }),
+    );
+
+    await expect(
+      svc.dpTrends('vdevo1', {
+        from: '2026-01-01T00:00:00.000Z',
+        to: '2026-06-01T00:00:00.000Z',
+      }),
+    ).rejects.toThrow('区间不能超过 90 天');
+
+    prisma.deviceEvent.findMany.mockResolvedValue([]);
+    const empty = await svc.dpTrends('vdevo1', {
+      dpIds: 'steam_temp_current',
+      from: '2026-10-22T00:00:00.000Z',
+      to: '2026-10-22T01:00:00.000Z',
+    });
+    expect(empty.series).toEqual([
+      { dpId: 'steam_temp_current', name: '蒸箱当前温度', unit: '℃', points: [] },
+    ]);
+    expect(empty.bucket).toBe('5min');
+  });
 });

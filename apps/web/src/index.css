@@ -1442,3 +1442,76 @@ table.data tbody tr.no-click {
 .fault-more {
   margin-top: 0.75rem;
 }
+
+.dp-trend .section-bar {
+  flex-wrap: wrap;
+}
+
+.dp-trend-picks {
+  margin: 0;
+}
+
+.dp-trend-tools,
+.dp-trend-choices,
+.dp-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  align-items: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.dp-trend-choices .check-label,
+.dp-legend {
+  font-size: 13px;
+}
+
+.dp-legend {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.dp-legend i {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.dp-legend.is-off {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.dp-trend-line {
+  fill: none;
+  stroke-width: 1.75;
+}
+
+.dp-trend-band {
+  opacity: 0.18;
+}
+
+.dp-fault-band {
+  fill: #8aa4ad;
+  opacity: 0.18;
+}
+
+.dp-fault-band.is-open {
+  fill: var(--danger);
+  opacity: 0.16;
+}
+
+.dp-fault-line {
+  stroke: #8aa4ad;
+  stroke-width: 1.25;
+}
+
+.dp-fault-line.is-open {
+  stroke: var(--danger);
+}

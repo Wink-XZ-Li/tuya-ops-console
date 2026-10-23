@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, qs } from '../api/client';
 import { DeviceFunction } from '../components/CommandPanel';
+import { DpTrendPanel } from '../components/DpTrendPanel';
 import { FaultHistoryPanel } from '../components/FaultHistoryPanel';
 import { MultiSelect } from '../components/MultiSelect';
 import { StatusPanel } from '../components/StatusPanel';
@@ -463,6 +464,7 @@ export function DeviceDetailPage() {
           </section>
 
           <FaultHistoryPanel deviceId={device.deviceId} />
+          <DpTrendPanel deviceId={device.deviceId} productId={device.productId} />
 
           <div className="device-split">
             <section className="card">

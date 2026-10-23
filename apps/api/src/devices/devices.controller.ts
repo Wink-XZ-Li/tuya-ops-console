@@ -3,6 +3,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { DevicesService } from './devices.service';
+import { DpTrendsQueryDto } from './dto/dp-trends.dto';
 import { FaultHistoryQueryDto } from './dto/fault-history.dto';
 import { ListDeviceEventsDto } from './dto/list-device-events.dto';
 import { ListDevicesDto } from './dto/list-devices.dto';
@@ -59,6 +60,12 @@ export class DevicesController {
   @Roles('readonly', 'operator', 'admin')
   faultHistory(@Param('deviceId') deviceId: string, @Query() query: FaultHistoryQueryDto) {
     return this.devicesService.faultHistory(deviceId, query);
+  }
+
+  @Get(':deviceId/dp-trends')
+  @Roles('readonly', 'operator', 'admin')
+  dpTrends(@Param('deviceId') deviceId: string, @Query() query: DpTrendsQueryDto) {
+    return this.devicesService.dpTrends(deviceId, query);
   }
 
   @Get(':deviceId')
