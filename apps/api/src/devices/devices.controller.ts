@@ -4,6 +4,7 @@ import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { DevicesService } from './devices.service';
 import { ConnectivityQueryDto } from './dto/connectivity.dto';
+import { StatusBarsQueryDto } from './dto/status-bars.dto';
 import { DpTrendsQueryDto } from './dto/dp-trends.dto';
 import { FaultHistoryQueryDto } from './dto/fault-history.dto';
 import { UsageQueryDto } from './dto/usage.dto';
@@ -80,6 +81,12 @@ export class DevicesController {
   @Roles('readonly', 'operator', 'admin')
   connectivity(@Param('deviceId') deviceId: string, @Query() query: ConnectivityQueryDto) {
     return this.devicesService.connectivity(deviceId, query);
+  }
+
+  @Get(':deviceId/status-bars')
+  @Roles('readonly', 'operator', 'admin')
+  statusBars(@Param('deviceId') deviceId: string, @Query() query: StatusBarsQueryDto) {
+    return this.devicesService.statusBars(deviceId, query);
   }
 
   @Get(':deviceId')

@@ -378,4 +378,86 @@ describe('DevicesService', () => {
     prisma.device.findUnique.mockResolvedValue(null);
     await expect(svc.connectivity('missing', {})).rejects.toThrow('Device missing not found');
   });
+
+  it('builds status ribbons from enum and bool property reports and skips products with none', async () => {
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'internal-1',
+          productId: '1x0qz5jtlabxywcg',
+        }),
+      },
+      deviceEvent: {
+        findMany: jest.fn().mockImplementation(async ({ where }: { where: { eventTime: { lt?: Date; gte?: Date } } }) => {
+          if (where.eventTime.lt) {
+            return [
+              {
+                eventTime: new Date('2026-10-15T00:00:00.000Z'),
+                payload: {
+                  status: [
+                    { code: 'work_state', value: 'code_standby' },
+                    { code: 'temp_current', value: 40 },
+                  ],
+                },
+              },
+            ];
+          }
+          return [
+            {
+              eventTime: new Date('2026-10-20T00:00:00.000Z'),
+              payload: { status: [{ dpId: 15, value: 'heating' }] },
+            },
+            {
+              eventTime: new Date('2026-10-21T00:00:00.000Z'),
+              payload: { status: [{ code: 'flame_status', value: true }] },
+            },
+          ];
+        }),
+      },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const page = await svc.statusBars('vdevo1', {
+      from: '2026-10-16T00:00:00.000Z',
+      to: '2026-10-23T00:00:00.000Z',
+    });
+
+    expect(prisma.deviceEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          deviceId: 'internal-1',
+          eventTime: { lt: new Date('2026-10-16T00:00:00.000Z') },
+          bizCode: { in: ['devicePropertyMessage', 'property', 'devicePropertyChange'] },
+        }),
+      }),
+    );
+    const work = page.bars.find((bar) => bar.dpId === 'work_state');
+    expect(work?.segments).toEqual([
+      {
+        tStart: '2026-10-16T00:00:00.000Z',
+        tEnd: '2026-10-20T00:00:00.000Z',
+        value: 'code_standby',
+        label: '冷待机',
+      },
+      {
+        tStart: '2026-10-20T00:00:00.000Z',
+        tEnd: '2026-10-23T00:00:00.000Z',
+        value: 'heating',
+        label: '加热',
+      },
+    ]);
+    expect(page.bars.find((bar) => bar.dpId === 'flame_status')?.segments.map((segment) => segment.label)).toEqual([
+      '未知',
+      '燃烧中',
+    ]);
+    expect(page.bars.some((bar) => bar.dpId === 'temp_current')).toBe(false);
+
+    prisma.device.findUnique.mockResolvedValue({ id: 'internal-2', productId: '0wyzpxylwzjx6gej' });
+    prisma.deviceEvent.findMany.mockClear();
+    const empty = await svc.statusBars('vdevo1', {
+      from: '2026-10-16T00:00:00.000Z',
+      to: '2026-10-23T00:00:00.000Z',
+    });
+    expect(empty.bars).toEqual([]);
+    expect(prisma.deviceEvent.findMany).not.toHaveBeenCalled();
+  });
 });

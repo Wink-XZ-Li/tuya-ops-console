@@ -7,6 +7,7 @@ import { FaultHistoryPanel } from '../components/FaultHistoryPanel';
 import { MultiSelect } from '../components/MultiSelect';
 import { StatusPanel } from '../components/StatusPanel';
 import { ConnectivityPanel } from '../components/ConnectivityPanel';
+import { StatusBarPanel } from '../components/StatusBarPanel';
 import { UsagePanel } from '../components/UsagePanel';
 import { getRole } from '../auth/storage';
 import {
@@ -486,6 +487,7 @@ export function DeviceDetailPage() {
           <DpTrendPanel deviceId={device.deviceId} productId={device.productId} />
           <UsagePanel deviceId={device.deviceId} productId={device.productId} />
           <ConnectivityPanel deviceId={device.deviceId} />
+          <StatusBarPanel deviceId={device.deviceId} productId={device.productId} />
 
           <div className="device-split">
             <section className="card">

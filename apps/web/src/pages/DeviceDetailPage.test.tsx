@@ -81,6 +81,7 @@ describe('DeviceDetailPage fault history placement', () => {
     expect(online.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(history.contains(online)).toBe(false);
     expect(screen.queryByRole('region', { name: '用量' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '运行状态' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关单' })).not.toBeInTheDocument();
 
@@ -96,6 +97,28 @@ describe('DeviceDetailPage fault history placement', () => {
 
   it('places 用量 under 参数走势 when the product has cumulative meters', async () => {
     api.mockImplementation(async (path: string) => {
+      if (path.includes('/status-bars')) {
+        return {
+          from: '2026-10-16T00:00:00.000Z',
+          to: '2026-10-23T00:00:00.000Z',
+          bars: [
+            {
+              dpId: 'work_state',
+              name: '工作状态',
+              type: 'enum',
+              range: ['code_standby', 'heating'],
+              segments: [
+                {
+                  tStart: '2026-10-20T00:00:00.000Z',
+                  tEnd: '2026-10-23T00:00:00.000Z',
+                  value: 'heating',
+                  label: '加热',
+                },
+              ],
+            },
+          ],
+        };
+      }
       if (path.includes('/usage')) {
         return {
           metricId: 'water',
@@ -138,10 +161,15 @@ describe('DeviceDetailPage fault history placement', () => {
     const trends = await screen.findByRole('region', { name: '参数走势' });
     const usage = await screen.findByRole('region', { name: '用量' });
     const online = await screen.findByRole('region', { name: '在线状态' });
+    const statusBars = await screen.findByRole('region', { name: '运行状态' });
     const firmware = screen.getByRole('heading', { name: '固件' });
     expect(trends.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(usage.compareDocumentPosition(online) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(online.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(online.compareDocumentPosition(statusBars) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(statusBars.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(statusBars).toHaveTextContent('工作状态');
+    const history = screen.getByRole('region', { name: '历史故障' });
+    expect(history.contains(statusBars)).toBe(false);
     expect(await screen.findByText('本区间合计 1 G')).toBeInTheDocument();
   });
 });

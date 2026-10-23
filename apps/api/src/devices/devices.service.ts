@@ -29,6 +29,7 @@ import {
   bucketForRange,
   applyDpScale,
   buildDpTrends,
+  extractDpRawSamples,
   extractDpSamples,
   needsReportCounts,
   resolveDpToken,
@@ -37,6 +38,12 @@ import {
 import { buildUsage, usageBucketForRange, type UsageBucket } from './usage';
 import { usageMetricsForProduct } from './usage-metrics';
 import { CONNECTIVITY_BIZ_CODES, buildConnectivityTimeline } from './connectivity';
+import {
+  buildStatusTimeline,
+  normalizeStatusValue,
+  statusBarDpsForProduct,
+  statusLabel,
+} from './status-bars';
 
 export interface ListDevicesParams {
   q?: string;
@@ -404,6 +411,101 @@ export class DevicesService {
         prior: prior ? { t: prior.eventTime.getTime(), bizCode: prior.bizCode } : null,
         events: events.map((event) => ({ t: event.eventTime.getTime(), bizCode: event.bizCode })),
       }),
+    };
+  }
+
+  /**
+   * Enum/bool status ribbons from property events.
+   * The latest sample of each configured DP before `from` carries that value in.
+   */
+  async statusBars(
+    deviceId: string,
+    query: { from?: string; to?: string },
+    now = new Date(),
+  ) {
+    const device = await this.prisma.device.findUnique({
+      where: { deviceId },
+      select: { id: true, productId: true },
+    });
+    if (!device) {
+      throw new NotFoundException(`Device ${deviceId} not found`);
+    }
+
+    const to = parseHistoryInstant(query.to, '结束时间') ?? now;
+    const from = parseHistoryInstant(query.from, '开始时间') ?? new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (from.getTime() >= to.getTime()) {
+      throw new BadRequestException('开始时间不能晚于结束时间');
+    }
+    if (to.getTime() - from.getTime() > TREND_MAX_RANGE_MS) {
+      throw new BadRequestException('区间不能超过 90 天');
+    }
+
+    const configured = statusBarDpsForProduct(device.productId);
+    if (configured.length === 0) {
+      return { from: from.toISOString(), to: to.toISOString(), bars: [] };
+    }
+
+    const schema = getProductDps(device.productId);
+    const byCode = new Map(configured.map((dp) => [dp.dpId, dp]));
+    const bizCode = { in: [...TREND_PROPERTY_BIZ_CODES] };
+    const [lookback, events] = await Promise.all([
+      this.prisma.deviceEvent.findMany({
+        where: { deviceId: device.id, eventTime: { lt: from }, bizCode },
+        orderBy: { eventTime: 'desc' },
+        select: { payload: true, eventTime: true },
+        take: 2000,
+      }),
+      this.prisma.deviceEvent.findMany({
+        where: { deviceId: device.id, eventTime: { gte: from, lte: to }, bizCode },
+        orderBy: { eventTime: 'asc' },
+        select: { payload: true, eventTime: true },
+        take: 8000,
+      }),
+    ]);
+
+    const prior = new Map<string, { t: number; value: string }>();
+    for (const event of lookback) {
+      for (const sample of extractDpRawSamples(event.payload, event.eventTime)) {
+        const code = resolveDpToken(sample.code, schema);
+        const dp = byCode.get(code);
+        if (!dp || prior.has(code)) continue;
+        const value = normalizeStatusValue(dp, sample.value);
+        if (!value) continue;
+        prior.set(code, { t: sample.t, value });
+      }
+      if (prior.size === byCode.size) break;
+    }
+
+    const points = new Map<string, Array<{ t: number; value: string }>>();
+    for (const event of events) {
+      for (const sample of extractDpRawSamples(event.payload, event.eventTime)) {
+        const code = resolveDpToken(sample.code, schema);
+        const dp = byCode.get(code);
+        if (!dp) continue;
+        const value = normalizeStatusValue(dp, sample.value);
+        if (!value) continue;
+        const list = points.get(code) ?? [];
+        list.push({ t: sample.t, value });
+        points.set(code, list);
+      }
+    }
+
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      bars: configured.map((dp) => ({
+        dpId: dp.dpId,
+        name: dp.name,
+        type: dp.type,
+        range: dp.range,
+        segments: buildStatusTimeline({
+          from,
+          to,
+          prior: prior.get(dp.dpId) ?? null,
+          points: points.get(dp.dpId) ?? [],
+          labelOf: (value) => statusLabel(dp, value),
+        }),
+      })),
     };
   }
 

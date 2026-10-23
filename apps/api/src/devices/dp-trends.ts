@@ -31,6 +31,8 @@ export type TrendDpSchema = {
 
 export type DpSample = { code: string; t: number; value: number };
 
+export type DpRawSample = { code: string; t: number; value: unknown };
+
 export type TrendPoint = { t: string; avg: number; min: number; max: number };
 
 export type TrendSeries = {
@@ -128,13 +130,22 @@ function rowsFromPayload(payload: unknown, depth = 0): RawRow[] {
   return [];
 }
 
-export function extractDpSamples(payload: unknown, eventTime: Date): DpSample[] {
+/** Every DP row on a property event, including enum strings and booleans. */
+export function extractDpRawSamples(payload: unknown, eventTime: Date): DpRawSample[] {
   const fallback = eventTime.getTime();
+  return rowsFromPayload(payload).map((row) => ({
+    code: row.code,
+    t: asEpochMs(row.time, fallback),
+    value: row.value,
+  }));
+}
+
+export function extractDpSamples(payload: unknown, eventTime: Date): DpSample[] {
   const samples: DpSample[] = [];
-  for (const row of rowsFromPayload(payload)) {
+  for (const row of extractDpRawSamples(payload, eventTime)) {
     const value = asDpNumber(row.value);
     if (value == null) continue;
-    samples.push({ code: row.code, t: asEpochMs(row.time, fallback), value });
+    samples.push({ code: row.code, t: row.t, value });
   }
   return samples;
 }
