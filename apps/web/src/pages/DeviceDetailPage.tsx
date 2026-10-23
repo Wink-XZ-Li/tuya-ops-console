@@ -6,6 +6,7 @@ import { DpTrendPanel } from '../components/DpTrendPanel';
 import { FaultHistoryPanel } from '../components/FaultHistoryPanel';
 import { MultiSelect } from '../components/MultiSelect';
 import { StatusPanel } from '../components/StatusPanel';
+import { UsagePanel } from '../components/UsagePanel';
 import { getRole } from '../auth/storage';
 import {
   DEVICE_EVENT_BIZ_CODES,
@@ -482,6 +483,7 @@ export function DeviceDetailPage() {
 
           <FaultHistoryPanel deviceId={device.deviceId} />
           <DpTrendPanel deviceId={device.deviceId} productId={device.productId} />
+          <UsagePanel deviceId={device.deviceId} productId={device.productId} />
 
           <div className="device-split">
             <section className="card">

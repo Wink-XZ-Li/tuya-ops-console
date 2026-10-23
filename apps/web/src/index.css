@@ -1542,3 +1542,73 @@ table.data tbody tr.no-click {
 .dp-fault-line.is-open {
   stroke: var(--danger);
 }
+
+.usage .section-bar {
+  flex-wrap: wrap;
+}
+
+.usage-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.75rem;
+}
+
+.usage-tabs button {
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+  color: var(--muted);
+}
+
+.usage-tabs button[aria-selected='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 650;
+}
+
+.usage-kpi {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0 0 0.8rem;
+}
+
+.usage-chart {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  height: 168px;
+}
+
+.usage-slot {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.usage-bar {
+  width: 68%;
+  background: #1b6c80;
+  border-radius: 2px 2px 0 0;
+}
+
+.usage-bar.is-zero {
+  height: 0;
+  background: transparent;
+}
+
+.usage-tick {
+  margin-top: 0.28rem;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.usage-note {
+  margin-top: 0.6rem;
+}

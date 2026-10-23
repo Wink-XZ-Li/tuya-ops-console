@@ -27,11 +27,15 @@ import {
   TREND_MAX_RANGE_MS,
   TREND_PROPERTY_BIZ_CODES,
   bucketForRange,
+  applyDpScale,
   buildDpTrends,
+  extractDpSamples,
   needsReportCounts,
   resolveDpToken,
   trendCountWindow,
 } from './dp-trends';
+import { buildUsage } from './usage';
+import { usageMetricsForProduct } from './usage-metrics';
 
 export interface ListDevicesParams {
   q?: string;
@@ -288,6 +292,60 @@ export class DevicesService {
         to,
         bucket,
       }),
+    };
+  }
+
+  /** Daily usage from cumulative meters. Days without two readings are omitted. */
+  async usage(deviceId: string, query: { metric?: string; from?: string; to?: string }, now = new Date()) {
+    const device = await this.prisma.device.findUnique({
+      where: { deviceId },
+      select: { id: true, productId: true },
+    });
+    if (!device) {
+      throw new NotFoundException(`Device ${deviceId} not found`);
+    }
+
+    const metric = usageMetricsForProduct(device.productId).find((item) => item.metricId === query.metric);
+    if (!metric) {
+      throw new BadRequestException('该产品没有这项用量');
+    }
+
+    const to = parseHistoryInstant(query.to, '结束时间') ?? now;
+    const from = parseHistoryInstant(query.from, '开始时间') ?? new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (from.getTime() > to.getTime()) {
+      throw new BadRequestException('开始时间不能晚于结束时间');
+    }
+    if (to.getTime() - from.getTime() > TREND_MAX_RANGE_MS) {
+      throw new BadRequestException('区间不能超过 90 天');
+    }
+
+    const schema = getProductDps(device.productId);
+    const events = await this.prisma.deviceEvent.findMany({
+      where: {
+        deviceId: device.id,
+        eventTime: { gte: from, lte: to },
+        bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
+      },
+      select: { payload: true, eventTime: true },
+      orderBy: { eventTime: 'asc' },
+    });
+
+    const samples = [];
+    for (const event of events) {
+      for (const raw of extractDpSamples(event.payload, event.eventTime)) {
+        if (resolveDpToken(raw.code, schema) !== metric.sourceDpId) continue;
+        samples.push({ t: raw.t, value: applyDpScale(raw.value, metric.scale) });
+      }
+    }
+
+    return {
+      metricId: metric.metricId,
+      name: metric.name,
+      sourceDpId: metric.sourceDpId,
+      unit: metric.unit,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      ...buildUsage({ samples, from, to, mode: metric.mode }),
     };
   }
 

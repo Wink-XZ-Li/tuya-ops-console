@@ -5,6 +5,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { DevicesService } from './devices.service';
 import { DpTrendsQueryDto } from './dto/dp-trends.dto';
 import { FaultHistoryQueryDto } from './dto/fault-history.dto';
+import { UsageQueryDto } from './dto/usage.dto';
 import { ListDeviceEventsDto } from './dto/list-device-events.dto';
 import { ListDevicesDto } from './dto/list-devices.dto';
 
@@ -66,6 +67,12 @@ export class DevicesController {
   @Roles('readonly', 'operator', 'admin')
   dpTrends(@Param('deviceId') deviceId: string, @Query() query: DpTrendsQueryDto) {
     return this.devicesService.dpTrends(deviceId, query);
+  }
+
+  @Get(':deviceId/usage')
+  @Roles('readonly', 'operator', 'admin')
+  usage(@Param('deviceId') deviceId: string, @Query() query: UsageQueryDto) {
+    return this.devicesService.usage(deviceId, query);
   }
 
   @Get(':deviceId')

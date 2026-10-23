@@ -291,4 +291,45 @@ describe('DevicesService', () => {
     ]);
     expect(empty.bucket).toBe('5min');
   });
+
+  it('diffs gas_consumption for a product that has a usage meter and scales the raw value', async () => {
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'internal-1',
+          productId: '1x0qz5jtlabxywcg',
+        }),
+      },
+      deviceEvent: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            eventTime: new Date('2026-10-22T00:00:00.000Z'),
+            payload: { status: [{ code: 'gas_consumption', value: 100 }] },
+          },
+          {
+            eventTime: new Date('2026-10-22T06:00:00.000Z'),
+            payload: { status: [{ dpId: 24, value: 250 }] },
+          },
+        ]),
+      },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const page = await svc.usage('vdevo1', {
+      metric: 'gas',
+      from: '2026-10-21T16:00:00.000Z',
+      to: '2026-10-22T16:00:00.000Z',
+    });
+    expect(page).toMatchObject({
+      metricId: 'gas',
+      sourceDpId: 'gas_consumption',
+      unit: 'm³',
+      total: 1.5,
+      dailyAvg: 1.5,
+      peakDay: { date: '2026-10-22', value: 1.5 },
+      note: null,
+    });
+    expect(page.days).toEqual([{ date: '2026-10-22', value: 1.5 }]);
+
+    await expect(svc.usage('vdevo1', { metric: 'energy' })).rejects.toThrow('该产品没有这项用量');
+  });
 });

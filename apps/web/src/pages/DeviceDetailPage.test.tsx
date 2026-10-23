@@ -77,6 +77,7 @@ describe('DeviceDetailPage fault history placement', () => {
     expect(status.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(history.compareDocumentPosition(trends) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(trends.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('region', { name: '用量' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '关单' })).not.toBeInTheDocument();
 
@@ -88,5 +89,54 @@ describe('DeviceDetailPage fault history placement', () => {
     expect(screen.getByRole('button', { name: '收起状态集' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('暂无状态点')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: '自动刷新' })).toBeInTheDocument();
+  });
+
+  it('places 用量 under 参数走势 when the product has cumulative meters', async () => {
+    api.mockImplementation(async (path: string) => {
+      if (path.includes('/usage')) {
+        return {
+          metricId: 'water',
+          name: '用水量',
+          unit: 'G',
+          from: '2026-10-16T00:00:00.000Z',
+          to: '2026-10-23T00:00:00.000Z',
+          total: 1,
+          dailyAvg: 1,
+          peakDay: { date: '2026-10-22', value: 1 },
+          days: [{ date: '2026-10-22', value: 1 }],
+          note: null,
+        };
+      }
+      if (path.includes('/fault-history')) {
+        return {
+          items: [],
+          summary: { openCount: 0, openedInRange: 0, longestDurationMinutes: null },
+          nextCursor: null,
+        };
+      }
+      if (path.includes('/dp-trends')) {
+        return { from: '2026-10-16T00:00:00.000Z', to: '2026-10-23T00:00:00.000Z', bucket: '1h', series: [] };
+      }
+      if (path.includes('/functions')) return [];
+      if (path.includes('/events')) return { items: [], total: 0 };
+      if (path.includes('/cloud-logs')) return { list: [], hasMore: false, startTime: 1, endTime: 2 };
+      if (path.includes('/firmware')) return { upgrades: [] };
+      return { ...device, productId: '1x0qz5jtlabxywcg' };
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/devices/vdevo1']}>
+        <Routes>
+          <Route path="/devices/:deviceId" element={<DeviceDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const trends = await screen.findByRole('region', { name: '参数走势' });
+    const usage = await screen.findByRole('region', { name: '用量' });
+    const firmware = screen.getByRole('heading', { name: '固件' });
+    expect(trends.compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(usage.compareDocumentPosition(firmware) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(await screen.findByText('本区间合计 1 G')).toBeInTheDocument();
   });
 });
