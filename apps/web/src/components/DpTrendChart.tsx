@@ -222,23 +222,19 @@ function TrendRun({
     min: yAt(point.min),
     max: yAt(point.max),
   }));
-  const line = coords
-    .map((row, index) => `${index === 0 ? 'M' : 'L'} ${row.x.toFixed(1)} ${row.avg.toFixed(1)}`)
-    .join(' ');
-  const band =
+  const linePoints = coords.map((row) => pair(row.x, row.avg)).join(' ');
+  const bandPoints =
     coords.length > 1
-      ? `${coords
-          .map((row, index) => `${index === 0 ? 'M' : 'L'} ${row.x.toFixed(1)} ${row.max.toFixed(1)}`)
-          .join(' ')} ${[...coords]
-          .reverse()
-          .map((row) => `L ${row.x.toFixed(1)} ${row.min.toFixed(1)}`)
-          .join(' ')} Z`
+      ? [
+          ...coords.map((row) => pair(row.x, row.max)),
+          ...[...coords].reverse().map((row) => pair(row.x, row.min)),
+        ].join(' ')
       : '';
 
   return (
     <>
-      {band && <path className="dp-trend-band" d={band} fill={color} />}
-      <path className="dp-trend-line" d={line} stroke={color} />
+      {bandPoints && <polygon className="dp-trend-band" points={bandPoints} fill={color} />}
+      <polyline className="dp-trend-line" points={linePoints} stroke={color} fill="none" />
       {coords.map((row) => (
         <circle
           key={row.point.t}
@@ -257,6 +253,10 @@ function TrendRun({
       ))}
     </>
   );
+}
+
+function pair(x: number, y: number): string {
+  return `${x.toFixed(1)},${y.toFixed(1)}`;
 }
 
 function formatTick(value: number): string {

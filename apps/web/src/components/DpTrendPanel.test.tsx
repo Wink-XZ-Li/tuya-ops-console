@@ -126,9 +126,15 @@ describe('DpTrendPanel', () => {
     await waitFor(() => {
       expect(document.querySelectorAll('[data-dp="temp_out"] circle')).toHaveLength(2);
     });
-    const line = document.querySelector('[data-dp="temp_out"] .dp-trend-line');
-    expect(document.querySelector('[data-dp="temp_out"]')?.getAttribute('data-runs')).toBe('1');
-    expect(line?.getAttribute('d')).toMatch(/\bL\s/);
+    const series = document.querySelector('[data-dp="temp_out"]');
+    const line = series?.querySelector('.dp-trend-line');
+    const band = series?.querySelector('.dp-trend-band');
+    expect(series?.getAttribute('data-runs')).toBe('1');
+    expect(line?.tagName.toLowerCase()).toBe('polyline');
+    expect(line?.getAttribute('points')?.trim().split(/\s+/)).toHaveLength(2);
+    expect(band?.tagName.toLowerCase()).toBe('polygon');
+    expect(band?.getAttribute('points')?.trim().split(/\s+/)).toHaveLength(4);
+    expect(series?.querySelector('path')).toBeNull();
     expect(document.querySelectorAll('[data-dp="temp_out"] .dp-trend-line')).toHaveLength(1);
     expect(document.querySelector('[data-dp="ph"]')).toBeNull();
     expect(document.querySelector('[data-dp="lhd"]')).toBeNull();

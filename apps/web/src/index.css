@@ -1491,6 +1491,8 @@ table.data tbody tr.no-click {
 .dp-trend-line {
   fill: none;
   stroke-width: 1.75;
+  stroke-linecap: butt;
+  stroke-linejoin: miter;
 }
 
 .dp-trend-band {
