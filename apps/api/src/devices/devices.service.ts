@@ -34,7 +34,7 @@ import {
   resolveDpToken,
   trendCountWindow,
 } from './dp-trends';
-import { buildUsage } from './usage';
+import { buildUsage, usageBucketForRange, type UsageBucket } from './usage';
 import { usageMetricsForProduct } from './usage-metrics';
 
 export interface ListDevicesParams {
@@ -295,8 +295,12 @@ export class DevicesService {
     };
   }
 
-  /** Daily usage from cumulative meters. Days without two readings are omitted. */
-  async usage(deviceId: string, query: { metric?: string; from?: string; to?: string }, now = new Date()) {
+  /** Usage bars from cumulative meters. `bucket=hour` for a 24-hour view, `day` otherwise. Empty buckets are omitted. */
+  async usage(
+    deviceId: string,
+    query: { metric?: string; from?: string; to?: string; bucket?: UsageBucket },
+    now = new Date(),
+  ) {
     const device = await this.prisma.device.findUnique({
       where: { deviceId },
       select: { id: true, productId: true },
@@ -318,6 +322,7 @@ export class DevicesService {
     if (to.getTime() - from.getTime() > TREND_MAX_RANGE_MS) {
       throw new BadRequestException('区间不能超过 90 天');
     }
+    const bucket = query.bucket ?? usageBucketForRange(to.getTime() - from.getTime());
 
     const schema = getProductDps(device.productId);
     const events = await this.prisma.deviceEvent.findMany({
@@ -345,7 +350,7 @@ export class DevicesService {
       unit: metric.unit,
       from: from.toISOString(),
       to: to.toISOString(),
-      ...buildUsage({ samples, from, to, mode: metric.mode }),
+      ...buildUsage({ samples, from, to, mode: metric.mode, bucket }),
     };
   }
 

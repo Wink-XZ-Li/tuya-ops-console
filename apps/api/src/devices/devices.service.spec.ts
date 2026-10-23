@@ -318,6 +318,7 @@ describe('DevicesService', () => {
       metric: 'gas',
       from: '2026-10-21T16:00:00.000Z',
       to: '2026-10-22T16:00:00.000Z',
+      bucket: 'day',
     });
     expect(page).toMatchObject({
       metricId: 'gas',

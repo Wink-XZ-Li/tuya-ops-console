@@ -33,7 +33,10 @@ const USAGE_SOURCES: Array<{ metricId: UsageMetricId; name: string; codes: strin
 ];
 
 const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+export type UsageBucket = 'hour' | 'day';
 
 export function usageMetricsFromSchema(schema: ProductDp[]): UsageMetricConfig[] {
   const byCode = new Map(schema.filter((dp) => dp.type === 'value').map((dp) => [dp.code, dp]));
@@ -62,28 +65,39 @@ export function usageMetricsForProduct(productId: string): UsageMetricConfig[] {
 }
 
 export function listShanghaiDates(fromIso: string, toIso: string): string[] {
+  return listUsageSlots(fromIso, toIso, 'day');
+}
+
+/**
+ * Calendar slots for the window. Day mode includes the Shanghai day that contains `to`,
+ * even when `to` lands on midnight. Hour mode is half-open, so an exact 24-hour window is 24 bars.
+ */
+export function listUsageSlots(fromIso: string, toIso: string, bucket: UsageBucket): string[] {
   const fromMs = Date.parse(fromIso);
   const toMs = Date.parse(toIso);
   if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs < fromMs) return [];
-  const dates: string[] = [];
-  let cursor = shanghaiDayStart(fromMs);
-  const last = shanghaiDayStart(toMs);
-  while (cursor <= last && dates.length < 120) {
-    dates.push(formatShanghaiDate(cursor));
-    cursor += DAY_MS;
+  const size = bucket === 'hour' ? HOUR_MS : DAY_MS;
+  const slots: string[] = [];
+  let cursor = bucketStart(fromMs, size);
+  const inclusiveEnd = bucket === 'day' ? bucketStart(toMs, size) : toMs - 1;
+  while (cursor <= inclusiveEnd && slots.length < 120) {
+    if (cursor + size > fromMs) slots.push(formatShanghaiStamp(cursor, bucket));
+    cursor += size;
   }
-  return dates;
+  return slots;
 }
 
-function shanghaiDayStart(timeMs: number): number {
+function bucketStart(timeMs: number, size: number): number {
   const shifted = timeMs + SHANGHAI_OFFSET_MS;
-  return Math.floor(shifted / DAY_MS) * DAY_MS - SHANGHAI_OFFSET_MS;
+  return Math.floor(shifted / size) * size - SHANGHAI_OFFSET_MS;
 }
 
-function formatShanghaiDate(dayStartMs: number): string {
-  const shifted = new Date(dayStartMs + SHANGHAI_OFFSET_MS);
+function formatShanghaiStamp(bucketStartMs: number, bucket: UsageBucket): string {
+  const shifted = new Date(bucketStartMs + SHANGHAI_OFFSET_MS);
   const year = shifted.getUTCFullYear();
   const month = String(shifted.getUTCMonth() + 1).padStart(2, '0');
   const day = String(shifted.getUTCDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  if (bucket === 'day') return `${year}-${month}-${day}`;
+  const hour = String(shifted.getUTCHours()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hour}:00`;
 }

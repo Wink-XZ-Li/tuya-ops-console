@@ -85,4 +85,27 @@ describe('buildUsage', () => {
     expect(built.note).toContain('缺测');
     expect(built.days.some((day) => day.value === 0)).toBe(false);
   });
+
+  it('puts a 24-hour cumulative window on Shanghai hours and skips empty hours', () => {
+    const built = buildUsage({
+      mode: 'cumulative',
+      bucket: 'hour',
+      from: new Date('2026-10-22T00:00:00.000Z'),
+      to: new Date('2026-10-23T00:00:00.000Z'),
+      samples: [
+        { t: Date.parse('2026-10-22T01:00:00.000Z'), value: 10 },
+        { t: Date.parse('2026-10-22T02:00:00.000Z'), value: 14 },
+        { t: Date.parse('2026-10-22T05:00:00.000Z'), value: 20 },
+      ],
+    });
+
+    expect(built.bucket).toBe('hour');
+    expect(built.days).toEqual([
+      { date: '2026-10-22T10:00', value: 4 },
+      { date: '2026-10-22T13:00', value: 6 },
+    ]);
+    expect(built.total).toBe(10);
+    expect(built.dailyAvg).toBe(5);
+    expect(built.days.every((day) => day.value >= 0)).toBe(true);
+  });
 });

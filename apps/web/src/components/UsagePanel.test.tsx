@@ -30,11 +30,31 @@ describe('UsagePanel', () => {
     api.mockImplementation(async (path: string) => {
       const url = new URL(path, 'http://local');
       const from = url.searchParams.get('from') ?? '';
+      const bucket = url.searchParams.get('bucket') === 'hour' ? 'hour' : 'day';
       const wide = from.startsWith('2026-09-23');
+      if (bucket === 'hour') {
+        return {
+          metricId: url.searchParams.get('metric'),
+          name: '用水量',
+          unit: 'G',
+          bucket,
+          from,
+          to: url.searchParams.get('to'),
+          total: 4,
+          dailyAvg: 2,
+          peakDay: { date: '2026-10-22T18:00', value: 3 },
+          days: [
+            { date: '2026-10-22T16:00', value: 1 },
+            { date: '2026-10-22T18:00', value: 3 },
+          ],
+          note: null,
+        };
+      }
       return {
         metricId: url.searchParams.get('metric'),
         name: '用水量',
         unit: 'G',
+        bucket,
         from,
         to: url.searchParams.get('to'),
         total: wide ? 9 : 7,
@@ -63,10 +83,19 @@ describe('UsagePanel', () => {
 
     const first = new URL(String(api.mock.calls[0]?.[0]), 'http://local');
     expect(first.searchParams.get('metric')).toBe('water');
+    expect(first.searchParams.get('bucket')).toBe('day');
     expect(first.searchParams.get('from')).toBe('2026-10-16T00:00:00.000Z');
+    expect(screen.getByText('按日柱')).toBeInTheDocument();
 
+    const bar = document.querySelector('.usage-bar[data-value="5"]');
     expect(document.querySelectorAll('.usage-bar')).toHaveLength(2);
-    expect(document.querySelector('.usage-bar[data-value="5"]')?.getAttribute('title')).toContain('2026-10-22 5 G');
+    expect(bar?.closest('.usage-plot')).toBeTruthy();
+    expect(bar?.parentElement?.querySelector('.usage-tick')).toBeNull();
+    expect(document.querySelector('.usage-axis .usage-tick')?.textContent).not.toBe('');
+    expect(document.querySelector('.usage-y')?.textContent).toContain('0');
+    fireEvent.mouseEnter(bar!.parentElement!);
+    expect(screen.getByRole('tooltip').textContent).toContain('2026-10-22');
+    expect(screen.getByRole('tooltip').textContent).toContain('5 G');
     expect(document.querySelector('[data-date="2026-10-21"]')?.getAttribute('data-gap')).toBe('1');
     expect(document.querySelector('[data-date="2026-10-21"] .usage-bar')).toBeNull();
     expect(screen.getByText(/不出现负用量/)).toBeInTheDocument();
@@ -81,5 +110,21 @@ describe('UsagePanel', () => {
     await waitFor(() => {
       expect(api.mock.calls.some((call) => String(call[0]).includes('metric=gas'))).toBe(true);
     });
+
+    fireEvent.click(screen.getByRole('button', { name: '近 24 小时' }));
+    expect(await screen.findByText('本区间合计 4 G')).toBeInTheDocument();
+    expect(screen.getByText('时均 2 G')).toBeInTheDocument();
+    expect(screen.getByText('按小时柱')).toBeInTheDocument();
+    const hourly = api.mock.calls.map((call) => String(call[0])).at(-1) ?? '';
+    const hourlyUrl = new URL(hourly, 'http://local');
+    expect(hourlyUrl.searchParams.get('bucket')).toBe('hour');
+    expect(hourlyUrl.searchParams.get('from')).toBe('2026-10-22T00:00:00.000Z');
+    fireEvent.mouseEnter(document.querySelector('.usage-bar[data-value="3"]')!.parentElement!);
+    expect(screen.getByRole('tooltip').textContent).toContain('2026-10-22 18:00');
+    expect(screen.getByRole('tooltip').textContent).toContain('3 G');
+
+    fireEvent.change(screen.getByLabelText('开始'), { target: { value: '2026-01-01T00:00' } });
+    fireEvent.change(screen.getByLabelText('结束'), { target: { value: '2026-06-01T00:00' } });
+    expect(await screen.findByText('区间不能超过 90 天')).toBeInTheDocument();
   });
 });
