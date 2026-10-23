@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { TREND_BUCKET_MS, type TrendBucket, splitTrendRuns, trendX } from '../utils/dp-trend';
+import { trendX } from '../utils/dp-trend';
 
 export type DpTrendPoint = { t: string; avg: number; min: number; max: number };
 
@@ -27,12 +27,11 @@ type Props = {
   hidden: ReadonlySet<string>;
   from: string;
   to: string;
-  bucket: TrendBucket;
   faults: DpTrendFault[];
   onToggle: (dpId: string) => void;
 };
 
-export function DpTrendChart({ series, hidden, from, to, bucket, faults, onToggle }: Props) {
+export function DpTrendChart({ series, hidden, from, to, faults, onToggle }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hoverT, setHoverT] = useState<string | null>(null);
@@ -54,7 +53,6 @@ export function DpTrendChart({ series, hidden, from, to, bucket, faults, onToggl
 
   const fromMs = Date.parse(from);
   const toMs = Date.parse(to);
-  const bucketMs = TREND_BUCKET_MS[bucket];
   const height = 260;
   const plotW = Math.max(1, width - PAD.left - PAD.right);
   const plotH = height - PAD.top - PAD.bottom;
@@ -165,19 +163,10 @@ export function DpTrendChart({ series, hidden, from, to, bucket, faults, onToggl
           {series.map((item, index) => {
             if (hidden.has(item.dpId) || item.points.length === 0) return null;
             const color = COLORS[index % COLORS.length];
-            const runs = splitTrendRuns(item.points, bucketMs);
+            const points = [...item.points].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
             return (
-              <g key={item.dpId} data-dp={item.dpId} data-runs={runs.length}>
-                {runs.map((run, runIndex) => (
-                  <TrendRun
-                    key={`${item.dpId}-${runIndex}`}
-                    run={run}
-                    color={color}
-                    name={item.name}
-                    xAt={xAt}
-                    yAt={yAt}
-                  />
-                ))}
+              <g key={item.dpId} data-dp={item.dpId} data-runs="1">
+                <TrendRun run={points} color={color} name={item.name} xAt={xAt} yAt={yAt} />
               </g>
             );
           })}

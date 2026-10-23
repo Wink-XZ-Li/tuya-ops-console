@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   bucketForRange,
+  isHiddenTrendDp,
   readTrendSelection,
-  splitTrendRuns,
   trendWindow,
   trendX,
   writeTrendSelection,
@@ -21,17 +21,7 @@ describe('dp trend window', () => {
     expect(trendWindow('7d', now).from).toBe('2026-10-16T00:00:00.000Z');
   });
 
-  it('breaks a line across an empty bucket and aligns a fault to the same x as a point', () => {
-    const runs = splitTrendRuns(
-      [
-        { t: '2026-10-20T00:00:00.000Z', avg: 40 },
-        { t: '2026-10-20T02:00:00.000Z', avg: 41 },
-      ],
-      60 * 60 * 1000,
-    );
-    expect(runs).toHaveLength(2);
-    expect(runs.flat().some((point) => point.avg === 0)).toBe(false);
-
+  it('aligns a fault to the same x as a real sample', () => {
     const from = Date.parse('2026-10-16T00:00:00.000Z');
     const to = Date.parse('2026-10-23T00:00:00.000Z');
     const at = Date.parse('2026-10-20T00:00:00.000Z');
@@ -50,5 +40,12 @@ describe('dp trend selection memory', () => {
     writeTrendSelection('pid-b', ['power']);
     expect(readTrendSelection('pid-a')).toEqual(['temp_out']);
     expect(readTrendSelection('pid-b')).toEqual(['power']);
+    writeTrendSelection('pid-c', ['ph', 'lhd', 'temp_out']);
+    expect(readTrendSelection('pid-c')).toEqual(['temp_out']);
+    writeTrendSelection('pid-d', ['ph', 'lhd']);
+    expect(readTrendSelection('pid-d')).toBeNull();
+    expect(isHiddenTrendDp({ code: 'ph', name: 'PH采暖最大比例阀电流' })).toBe(true);
+    expect(isHiddenTrendDp({ code: 'lhd', name: 'LH-D（大气式）卫浴最大比例阀电流' })).toBe(true);
+    expect(isHiddenTrendDp({ code: 'temp_current', name: '当前温度' })).toBe(false);
   });
 });

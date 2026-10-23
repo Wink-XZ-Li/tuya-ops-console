@@ -32,19 +32,32 @@ export function trendX(timeMs: number, fromMs: number, toMs: number, left: numbe
   return left + ((timeMs - fromMs) / span) * plotW;
 }
 
-export function splitTrendRuns<T extends { t: string }>(points: T[], bucketMs: number): T[][] {
-  const runs: T[][] = [];
-  let current: T[] = [];
-  for (const point of points) {
-    const previous = current[current.length - 1];
-    if (previous && Date.parse(point.t) - Date.parse(previous.t) > bucketMs * 1.5) {
-      runs.push(current);
-      current = [];
-    }
-    current.push(point);
-  }
-  if (current.length > 0) runs.push(current);
-  return runs;
+/** Same service-parameter block the API refuses to chart. `ph` id 170, `lhd` id 171. */
+const NON_TREND_DP_CODES = new Set([
+  'ph',
+  'lhd',
+  'lhq',
+  'pl',
+  'dh',
+  'fh',
+  'fn',
+  'fl',
+  'fp',
+  'h0',
+  'h1',
+  'hc',
+  'id',
+  'od',
+]);
+
+export function isHiddenTrendDp(dp: { code: string; name?: string | null }): boolean {
+  const code = dp.code.trim().toLowerCase();
+  if (NON_TREND_DP_CODES.has(code)) return true;
+  const name = dp.name?.trim() ?? '';
+  if (!name) return false;
+  if (/^ph(?![a-z])/i.test(name) && /比例阀|电流/.test(name)) return true;
+  if (/lh-?d/i.test(name) && /比例阀|电流|大气/.test(name)) return true;
+  return false;
 }
 
 function storageKey(productId: string): string {
@@ -58,7 +71,10 @@ export function readTrendSelection(productId: string): string[] | null {
     if (raw == null) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return null;
-    return parsed.filter((code): code is string => typeof code === 'string' && code.length > 0);
+    const codes = parsed.filter((code): code is string => typeof code === 'string' && code.length > 0);
+    const visible = codes.filter((code) => !isHiddenTrendDp({ code }));
+    if (visible.length === 0) return codes.length === 0 ? [] : null;
+    return visible;
   } catch {
     return null;
   }

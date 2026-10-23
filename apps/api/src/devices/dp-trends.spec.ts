@@ -15,6 +15,9 @@ const schema = [
   { id: 3, code: 'fault', name: '故障告警', type: 'fault', values: { scale: 0 } },
   { id: 4, code: 'flow', name: '水流量', type: 'value', values: { scale: 0, unit: 'L/min' } },
   { id: 5, code: 'power', name: '功率', type: 'value', values: { scale: 0, unit: 'W' } },
+  { id: 170, code: 'ph', name: 'PH采暖最大比例阀电流', type: 'value', values: { scale: 0 } },
+  { id: 171, code: 'lhd', name: 'LH-D（大气式）卫浴最大比例阀电流', type: 'value', values: { scale: 0 } },
+  { id: 172, code: 'lhq', name: 'LH-Q（全预混）卫浴最大风机转速', type: 'value', values: { scale: 0 } },
 ];
 
 describe('dp trend buckets', () => {
@@ -108,6 +111,41 @@ describe('dp trend aggregation', () => {
       numericCodes: new Set(['temp', 'flow', 'power']),
     });
     expect(preferred).toEqual(['temp']);
+  });
+
+  it('keeps PH and LHD out of the default series even when they report the most', () => {
+    const events = [
+      ...Array.from({ length: 6 }, () => ({
+        eventTime: from,
+        payload: { status: [{ code: 'ph', value: 80 }, { code: 'lhd', value: 90 }] },
+      })),
+      { eventTime: from, payload: { status: [{ code: 'temp', value: 400 }] } },
+      { eventTime: from, payload: { status: [{ dpId: 170, value: 81 }] } },
+    ];
+    const top = buildDpTrends({
+      events,
+      schema,
+      defaults: ['ph', 'lhd'],
+      requested: [],
+      from,
+      to,
+      bucket: '1h',
+    });
+    expect(top.map((series) => series.dpId)).toEqual(['temp']);
+    expect(top.some((series) => /ph|lhd/i.test(series.dpId) || /PH|LH-D/.test(series.name))).toBe(
+      false,
+    );
+
+    const explicit = buildDpTrends({
+      events,
+      schema,
+      defaults: [],
+      requested: ['170', 'lhd', 'temp'],
+      from,
+      to,
+      bucket: '1h',
+    });
+    expect(explicit.map((series) => series.dpId)).toEqual(['temp']);
   });
 
   it('returns an empty series instead of throwing when nothing was reported', () => {

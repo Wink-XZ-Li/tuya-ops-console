@@ -7,6 +7,7 @@ import {
   type TrendBucket,
   type TrendPreset,
   bucketForRange,
+  isHiddenTrendDp,
   readTrendSelection,
   trendWindow,
   writeTrendSelection,
@@ -64,7 +65,8 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
   const [reload, setReload] = useState(0);
 
   const numericDps = useMemo(
-    () => getProductDps(productId).filter((dp) => dp.type === 'value'),
+    () =>
+      getProductDps(productId).filter((dp) => dp.type === 'value' && !isHiddenTrendDp(dp)),
     [productId],
   );
 
@@ -185,7 +187,8 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
     };
   }, [compare, deviceId, expanded, domain]);
 
-  const checked = selected ?? series.map((item) => item.dpId);
+  const trendSeries = series.filter((item) => !isHiddenTrendDp({ code: item.dpId, name: item.name }));
+  const checked = selected ?? trendSeries.map((item) => item.dpId);
   const options =
     numericDps.length > 0
       ? numericDps.map((dp) => ({
@@ -193,14 +196,17 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
           name: dp.name,
           unit: typeof dp.values?.unit === 'string' ? dp.values.unit : '',
         }))
-      : series.map((item) => ({ code: item.dpId, name: item.name, unit: item.unit ?? '' }));
+      : trendSeries.map((item) => ({ code: item.dpId, name: item.name, unit: item.unit ?? '' }));
   const checkedNames = checked.map(
-    (code) => options.find((item) => item.code === code)?.name || series.find((item) => item.dpId === code)?.name || code,
+    (code) =>
+      options.find((item) => item.code === code)?.name ||
+      trendSeries.find((item) => item.dpId === code)?.name ||
+      code,
   );
-  const hasPoints = series.some((item) => item.points.length > 0);
+  const hasPoints = trendSeries.some((item) => item.points.length > 0);
 
   function toggleCode(code: string) {
-    const base = selected ?? series.map((item) => item.dpId);
+    const base = selected ?? trendSeries.map((item) => item.dpId);
     const next = base.includes(code) ? base.filter((item) => item !== code) : [...base, code];
     if (next.length > TREND_SERIES_LIMIT) {
       setError('最多同时看 8 条');
@@ -281,11 +287,10 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
             </p>
           ) : domain ? (
             <DpTrendChart
-              series={series}
+              series={trendSeries}
               hidden={hidden}
               from={domain.from}
               to={domain.to}
-              bucket={domain.bucket}
               faults={compare ? faults : []}
               onToggle={(dpId) => {
                 setHidden((current) => {

@@ -35,6 +35,21 @@ const series = [
     unit: '℃',
     points: [{ t: '2026-10-20T00:00:00.000Z', avg: 18, min: 17, max: 19 }],
   },
+  {
+    dpId: 'ph',
+    name: 'PH采暖最大比例阀电流',
+    unit: null,
+    points: [
+      { t: '2026-10-20T00:00:00.000Z', avg: 80, min: 80, max: 80 },
+      { t: '2026-10-20T02:00:00.000Z', avg: 81, min: 81, max: 81 },
+    ],
+  },
+  {
+    dpId: 'lhd',
+    name: 'LH-D（大气式）卫浴最大比例阀电流',
+    unit: null,
+    points: [{ t: '2026-10-20T00:00:00.000Z', avg: 90, min: 90, max: 90 }],
+  },
 ];
 
 describe('DpTrendPanel', () => {
@@ -97,7 +112,7 @@ describe('DpTrendPanel', () => {
     });
   });
 
-  it('charts the default 7-day hour buckets, breaks gaps, and aligns fault marks', async () => {
+  it('connects real buckets into one line and hides PH and LHD', async () => {
     render(<DpTrendPanel deviceId="dev-a" productId="pid-a" now={NOW} />);
 
     expect(await screen.findByText('常用 DP：出水温度、进水温度')).toBeInTheDocument();
@@ -111,7 +126,14 @@ describe('DpTrendPanel', () => {
     await waitFor(() => {
       expect(document.querySelectorAll('[data-dp="temp_out"] circle')).toHaveLength(2);
     });
-    expect(document.querySelector('[data-dp="temp_out"]')?.getAttribute('data-runs')).toBe('2');
+    const line = document.querySelector('[data-dp="temp_out"] .dp-trend-line');
+    expect(document.querySelector('[data-dp="temp_out"]')?.getAttribute('data-runs')).toBe('1');
+    expect(line?.getAttribute('d')).toMatch(/\bL\s/);
+    expect(document.querySelectorAll('[data-dp="temp_out"] .dp-trend-line')).toHaveLength(1);
+    expect(document.querySelector('[data-dp="ph"]')).toBeNull();
+    expect(document.querySelector('[data-dp="lhd"]')).toBeNull();
+    expect(screen.queryByText(/PH采暖/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/LH-D/)).not.toBeInTheDocument();
     expect(
       [...document.querySelectorAll('[data-avg]')].some((node) => node.getAttribute('data-avg') === '0'),
     ).toBe(false);

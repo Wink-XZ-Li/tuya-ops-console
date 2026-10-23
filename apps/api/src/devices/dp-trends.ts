@@ -143,6 +143,38 @@ export function isTrendValueDp(type: string): boolean {
   return type === 'value';
 }
 
+/**
+ * Installer calibration points, not operating trends.
+ * Confirmed in PRODUCT_DP_SCHEMAS.json: `ph` id 170「PH采暖最大比例阀电流」,
+ * `lhd` id 171「LH-D（大气式）卫浴最大比例阀电流」, and the same service block.
+ */
+const NON_TREND_DP_CODES = new Set([
+  'ph',
+  'lhd',
+  'lhq',
+  'pl',
+  'dh',
+  'fh',
+  'fn',
+  'fl',
+  'fp',
+  'h0',
+  'h1',
+  'hc',
+  'id',
+  'od',
+]);
+
+export function isHiddenTrendDp(dp: { code: string; name?: string | null }): boolean {
+  const code = dp.code.trim().toLowerCase();
+  if (NON_TREND_DP_CODES.has(code)) return true;
+  const name = dp.name?.trim() ?? '';
+  if (!name) return false;
+  if (/^ph(?![a-z])/i.test(name) && /比例阀|电流/.test(name)) return true;
+  if (/lh-?d/i.test(name) && /比例阀|电流|大气/.test(name)) return true;
+  return false;
+}
+
 export function resolveDpToken(token: string, schema: TrendDpSchema[]): string {
   const trimmed = token.trim();
   if (!trimmed) return '';
@@ -167,7 +199,9 @@ export function chooseTrendCodes(options: {
   numericCodes: ReadonlySet<string> | null;
 }): string[] {
   const allow = (code: string) =>
-    Boolean(code) && (options.numericCodes == null || options.numericCodes.has(code));
+    Boolean(code) &&
+    !isHiddenTrendDp({ code }) &&
+    (options.numericCodes == null || options.numericCodes.has(code));
   if (options.requested.length > 0) {
     return [...new Set(options.requested.filter(allow))].slice(0, TREND_SERIES_LIMIT);
   }
@@ -244,7 +278,7 @@ export function buildDpTrends(input: {
   bucket: TrendBucket;
 }): TrendSeries[] {
   const schema = input.schema;
-  const numericList = schema.filter((dp) => isTrendValueDp(dp.type));
+  const numericList = schema.filter((dp) => isTrendValueDp(dp.type) && !isHiddenTrendDp(dp));
   const numericCodes = schema.length > 0 ? new Set(numericList.map((dp) => dp.code)) : null;
   const meta = new Map(numericList.map((dp) => [dp.code, dp]));
   const requested = input.requested
@@ -261,6 +295,7 @@ export function buildDpTrends(input: {
   for (const event of input.events) {
     for (const raw of extractDpSamples(event.payload, event.eventTime)) {
       const code = resolveDpToken(raw.code, schema);
+      if (isHiddenTrendDp({ code, name: meta.get(code)?.name })) continue;
       if (numericCodes && !numericCodes.has(code)) continue;
       const value = applyDpScale(raw.value, schemaScale(meta.get(code)?.values));
       if (raw.t >= countFrom && raw.t <= toMs) {
