@@ -83,4 +83,136 @@ describe('DevicesService', () => {
     });
     expect(page).toMatchObject({ startTime: endTime - 168 * 3600_000, endTime, hasMore: true });
   });
+
+  it('returns fault history with dictionary copy and leaves alerts unchanged', async () => {
+    const now = new Date('2026-10-23T00:00:00.000Z');
+    const alerts = [
+      {
+        id: 'open-e1',
+        status: 'open',
+        category: 'fault',
+        faultCode: 'E1',
+        title: '故障 E1',
+        openedAt: new Date('2026-10-20T00:00:00.000Z'),
+        closedAt: null,
+        conditionStartedAt: new Date('2026-10-20T00:00:00.000Z'),
+        occurrenceCount: 3,
+        lastSeenAt: now,
+        closedReason: null,
+        detail: { dpCode: 'fault', label: 'E1' },
+      },
+      {
+        id: 'closed-e1',
+        status: 'closed',
+        category: 'fault',
+        faultCode: 'E1',
+        title: '故障 E1',
+        openedAt: new Date('2026-10-02T00:00:00.000Z'),
+        closedAt: new Date('2026-10-02T02:00:00.000Z'),
+        conditionStartedAt: new Date('2026-10-02T00:00:00.000Z'),
+        occurrenceCount: 1,
+        lastSeenAt: null,
+        closedReason: 'auto_clear',
+        detail: { dpCode: 'fault', label: 'E1' },
+      },
+      {
+        id: 'bare',
+        status: 'closed',
+        category: 'fault',
+        faultCode: 'ZZ',
+        title: '故障 ZZ',
+        openedAt: new Date('2026-10-11T00:00:00.000Z'),
+        closedAt: new Date('2026-10-11T00:30:00.000Z'),
+        conditionStartedAt: new Date('2026-10-11T00:00:00.000Z'),
+        occurrenceCount: 1,
+        lastSeenAt: null,
+        closedReason: 'manual',
+        detail: null,
+      },
+      {
+        id: 'offline',
+        status: 'open',
+        category: 'connectivity',
+        faultCode: 'offline',
+        title: '设备离线',
+        openedAt: new Date('2026-10-22T00:00:00.000Z'),
+        closedAt: null,
+        conditionStartedAt: new Date('2026-10-22T00:00:00.000Z'),
+        occurrenceCount: 1,
+        lastSeenAt: now,
+        closedReason: null,
+        detail: null,
+      },
+    ];
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1', productId: 'pid-1' }),
+      },
+      alert: { findMany: jest.fn().mockResolvedValue(alerts) },
+      faultCodeDefinition: {
+        findMany: jest.fn().mockResolvedValue([
+          { code: 'fault', label: 'E1', symptom: '火焰故障', suggestedAction: '检查燃气供应' },
+        ]),
+      },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const page = await svc.faultHistory(
+      'vdevo1',
+      {
+        from: '2026-09-23T00:00:00.000Z',
+        to: '2026-10-23T00:00:00.000Z',
+        includeConnectivity: '0',
+      },
+      now,
+    );
+
+    expect(prisma.alert.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { deviceId: 'internal-1' } }),
+    );
+    expect(prisma.alert).not.toHaveProperty('update');
+    expect(page.items.map((item) => item.id)).toEqual(['open-e1', 'bare', 'closed-e1']);
+    expect(page.items.filter((item) => item.faultCode === 'E1')).toHaveLength(2);
+    expect(page.items[0]).toMatchObject({
+      faultCode: 'E1',
+      symptom: '火焰故障',
+      suggestedAction: '检查燃气供应',
+      status: 'open',
+      connectivity: false,
+    });
+    expect(page.items.find((item) => item.id === 'closed-e1')).toMatchObject({
+      faultCode: 'E1',
+      symptom: '火焰故障',
+      closedReasonLabel: '自动恢复',
+      occurrenceCount: 1,
+    });
+    expect(page.items.find((item) => item.id === 'bare')).toMatchObject({
+      faultCode: 'ZZ',
+      symptom: null,
+      suggestedAction: null,
+      closedReasonLabel: '人工关闭',
+    });
+    expect(page.summary).toEqual({
+      openCount: 1,
+      openedInRange: 3,
+      longestDurationMinutes: 3 * 24 * 60,
+    });
+    expect(page.nextCursor).toBeNull();
+    expect(prisma.faultCodeDefinition.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { productId: 'pid-1', label: { in: ['E1', 'ZZ'] } },
+      }),
+    );
+
+    const withOffline = await svc.faultHistory(
+      'vdevo1',
+      { from: '2026-09-23T00:00:00.000Z', to: '2026-10-23T00:00:00.000Z', includeConnectivity: '1' },
+      now,
+    );
+    expect(withOffline.items[0]).toMatchObject({
+      id: 'offline',
+      faultCode: 'offline',
+      connectivity: true,
+      symptom: null,
+    });
+  });
 });

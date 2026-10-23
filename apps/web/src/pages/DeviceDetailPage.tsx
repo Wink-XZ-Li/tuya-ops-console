@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, qs } from '../api/client';
 import { DeviceFunction } from '../components/CommandPanel';
+import { FaultHistoryPanel } from '../components/FaultHistoryPanel';
 import { MultiSelect } from '../components/MultiSelect';
 import { StatusPanel } from '../components/StatusPanel';
 import { getRole } from '../auth/storage';
@@ -460,6 +461,8 @@ export function DeviceDetailPage() {
               onSent={() => void refreshStatus(device.deviceId)}
             />
           </section>
+
+          <FaultHistoryPanel deviceId={device.deviceId} />
 
           <div className="device-split">
             <section className="card">

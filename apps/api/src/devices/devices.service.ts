@@ -1,5 +1,6 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { DeviceOnlineStatus, Prisma } from '@prisma/client';
+import { alertDurationMinutes } from '../alerts/alerts.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TUYA_CLIENT, TuyaClient } from '../tuya/tuya.client';
 import { presentLocationText } from './china-admin';
@@ -9,6 +10,16 @@ import {
   deriveSignalStrength,
   statusFromPairs,
 } from './device-derived';
+import {
+  type FaultHistoryRow,
+  closedReasonLabel,
+  faultDpCode,
+  isConnectivityAlert,
+  pageFaultHistory,
+  pickFaultCopy,
+  selectFaultHistory,
+  summarizeFaultHistory,
+} from './fault-history';
 
 export interface ListDevicesParams {
   q?: string;
@@ -28,6 +39,14 @@ export interface ListDeviceEventsParams {
   to?: string;
   page?: number;
   pageSize?: number;
+}
+
+export interface FaultHistoryParams {
+  from?: string;
+  to?: string;
+  includeConnectivity?: string;
+  cursor?: string;
+  focus?: 'open' | 'opened';
 }
 
 @Injectable()
@@ -105,6 +124,90 @@ export class DevicesService {
     }
 
     return this.toDetail(device);
+  }
+
+  /** Read-only quality-fault timeline for one device. Does not close alerts. */
+  async faultHistory(deviceId: string, query: FaultHistoryParams, now = new Date()) {
+    const device = await this.prisma.device.findUnique({
+      where: { deviceId },
+      select: { id: true, productId: true },
+    });
+    if (!device) {
+      throw new NotFoundException(`Device ${deviceId} not found`);
+    }
+
+    const from = parseHistoryInstant(query.from, '开始时间');
+    const to = parseHistoryInstant(query.to, '结束时间');
+    if (from && to && from.getTime() > to.getTime()) {
+      throw new BadRequestException('开始时间不能晚于结束时间');
+    }
+    const includeConnectivity =
+      query.includeConnectivity === '1' || query.includeConnectivity === 'true';
+    const focus = query.focus === 'open' || query.focus === 'opened' ? query.focus : undefined;
+    const options = { from, to, includeConnectivity, focus };
+
+    const alerts = await this.prisma.alert.findMany({
+      where: { deviceId: device.id },
+      select: {
+        id: true,
+        status: true,
+        category: true,
+        faultCode: true,
+        title: true,
+        openedAt: true,
+        closedAt: true,
+        conditionStartedAt: true,
+        occurrenceCount: true,
+        lastSeenAt: true,
+        closedReason: true,
+        detail: true,
+      },
+    });
+    const rows = alerts as FaultHistoryRow[];
+    const selected = selectFaultHistory(rows, options);
+    const page = pageFaultHistory(selected, query.cursor);
+    const summary = summarizeFaultHistory(rows, options, now);
+
+    const labels = [
+      ...new Set(
+        page.items
+          .map((alert) => alert.faultCode)
+          .filter((code): code is string => Boolean(code)),
+      ),
+    ];
+    const definitions =
+      labels.length === 0
+        ? []
+        : await this.prisma.faultCodeDefinition.findMany({
+            where: { productId: device.productId, label: { in: labels } },
+            select: { code: true, label: true, symptom: true, suggestedAction: true },
+          });
+
+    return {
+      items: page.items.map((alert) => {
+        const copy = pickFaultCopy(definitions, alert.faultCode, faultDpCode(alert.detail));
+        return {
+          id: alert.id,
+          status: alert.status,
+          category: alert.category,
+          faultCode: alert.faultCode,
+          title: alert.title,
+          openedAt: alert.openedAt.toISOString(),
+          closedAt: alert.closedAt?.toISOString() ?? null,
+          conditionStartedAt: alert.conditionStartedAt?.toISOString() ?? null,
+          occurrenceCount: alert.occurrenceCount,
+          lastSeenAt: alert.lastSeenAt?.toISOString() ?? null,
+          closedReason: alert.closedReason,
+          closedReasonLabel: closedReasonLabel(alert.closedReason, alert.status),
+          symptom: copy.symptom,
+          suggestedAction: copy.suggestedAction,
+          durationMinutes: alertDurationMinutes(alert, now),
+          connectivity: isConnectivityAlert(alert),
+        };
+      }),
+      summary,
+      nextCursor: page.nextCursor,
+    };
   }
 
   /** Refresh OpenAPI status into statusJson + derived columns (detail page). */
@@ -358,6 +461,15 @@ export class DevicesService {
       openAlertCount: device.alerts.length,
     };
   }
+}
+
+function parseHistoryInstant(value: string | undefined, label: string): Date | undefined {
+  if (value == null || value.trim() === '') return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new BadRequestException(`${label}无效`);
+  }
+  return date;
 }
 
 function payloadMatchesDpId(payload: unknown, dpId: string): boolean {
