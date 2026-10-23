@@ -3,6 +3,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
 import { DevicesService } from './devices.service';
+import { ChangeMarkersQueryDto } from './dto/change-markers.dto';
 import { ConnectivityQueryDto } from './dto/connectivity.dto';
 import { StatusBarsQueryDto } from './dto/status-bars.dto';
 import { DpTrendsQueryDto } from './dto/dp-trends.dto';
@@ -81,6 +82,12 @@ export class DevicesController {
   @Roles('readonly', 'operator', 'admin')
   connectivity(@Param('deviceId') deviceId: string, @Query() query: ConnectivityQueryDto) {
     return this.devicesService.connectivity(deviceId, query);
+  }
+
+  @Get(':deviceId/change-markers')
+  @Roles('readonly', 'operator', 'admin')
+  changeMarkers(@Param('deviceId') deviceId: string, @Query() query: ChangeMarkersQueryDto) {
+    return this.devicesService.changeMarkers(deviceId, query);
   }
 
   @Get(':deviceId/status-bars')

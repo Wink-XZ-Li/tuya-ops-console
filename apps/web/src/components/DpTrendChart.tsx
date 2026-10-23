@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { trendX } from '../utils/dp-trend';
+import { type ChangeMarker, changeMarkerText } from './ChangeMarkTrack';
 
 export type DpTrendPoint = { t: string; avg: number; min: number; max: number };
 
@@ -27,13 +28,15 @@ type Props = {
   from: string;
   to: string;
   faults: DpTrendFault[];
+  markers?: ChangeMarker[];
   colorIndex?: number;
 };
 
-export function DpTrendChart({ series, from, to, faults, colorIndex = 0 }: Props) {
+export function DpTrendChart({ series, from, to, faults, markers = [], colorIndex = 0 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hoverT, setHoverT] = useState<string | null>(null);
+  const [markerTip, setMarkerTip] = useState<ChangeMarker | null>(null);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -87,6 +90,12 @@ export function DpTrendChart({ series, from, to, faults, colorIndex = 0 }: Props
   const hoverPoint = hoverT ? points.find((row) => row.t === hoverT) : undefined;
 
   function onMove(event: React.MouseEvent<SVGSVGElement>) {
+    const target = event.target as Element | null;
+    if (target?.closest?.('[data-marker]')) {
+      setHoverT(null);
+      return;
+    }
+    setMarkerTip(null);
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     let best: { t: string; dist: number } | null = null;
@@ -160,6 +169,29 @@ export function DpTrendChart({ series, from, to, faults, colorIndex = 0 }: Props
           <g>
             <TrendRun run={points} color={color} name={series.name} xAt={xAt} yAt={yAt} />
           </g>
+          {markers.map((marker) => {
+            const time = Date.parse(marker.t);
+            if (!Number.isFinite(time) || time < fromMs || time > toMs) return null;
+            const x = xAt(time);
+            return (
+              <g
+                key={`${marker.kind}-${marker.t}-${marker.label}`}
+                data-marker="1"
+                data-kind={marker.kind}
+                onMouseEnter={() => setMarkerTip(marker)}
+                onMouseLeave={() => setMarkerTip(null)}
+              >
+                <line
+                  className={`change-line is-${marker.kind}`}
+                  x1={x}
+                  x2={x}
+                  y1={PAD.top}
+                  y2={PAD.top + plotH}
+                />
+                <rect x={x - 4} y={PAD.top} width={8} height={plotH} fill="transparent" />
+              </g>
+            );
+          })}
           <line
             className="dp-trend-x-axis"
             x1={PAD.left}
@@ -181,7 +213,16 @@ export function DpTrendChart({ series, from, to, faults, colorIndex = 0 }: Props
           ))}
         </svg>
       )}
-      {hoverT && hoverPoint && (
+      {markerTip && (
+        <div
+          className="trend-tip"
+          role="tooltip"
+          style={{ left: Math.min(Math.max(xAt(Date.parse(markerTip.t)), 72), Math.max(72, width - 72)) }}
+        >
+          {changeMarkerText(markerTip)}
+        </div>
+      )}
+      {!markerTip && hoverT && hoverPoint && (
         <div className="trend-tip" style={{ left: tipLeft }}>
           <span>{new Date(hoverT).toLocaleString()}</span>
           <span>

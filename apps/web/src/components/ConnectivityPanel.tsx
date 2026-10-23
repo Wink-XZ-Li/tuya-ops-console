@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, qs } from '../api/client';
 import { TREND_MAX_RANGE_MS, type TrendPreset, trendWindow } from '../utils/dp-trend';
+import { ChangeMarkTrack, changeMarkerLegend, useChangeMarkers } from './ChangeMarkTrack';
 
 type ConnectivityState = 'online' | 'offline' | 'unknown';
 
@@ -89,6 +90,13 @@ export function ConnectivityPanel({ deviceId, now }: Props) {
     };
   }, [deviceId, requested]);
 
+  const rangeFrom = 'error' in requested ? '' : requested.from;
+  const rangeTo = 'error' in requested ? '' : requested.to;
+  const drawFrom = report?.from || rangeFrom;
+  const drawTo = report?.to || rangeTo;
+  const markers = useChangeMarkers(deviceId, drawFrom, drawTo, !('error' in requested) && Boolean(drawFrom && drawTo));
+  const markerNote = changeMarkerLegend(markers);
+
   const segments = report?.segments ?? [];
   const allUnknown = segments.length > 0 && segments.every((segment) => segment.state === 'unknown');
   const windowFrom = report?.from || ('error' in requested ? '' : requested.from);
@@ -166,7 +174,9 @@ export function ConnectivityPanel({ deviceId, now }: Props) {
       ) : !error ? (
         <>
           <p className="connectivity-summary">{summarize(segments)}</p>
+          {markerNote && <p className="hint change-legend">{markerNote}</p>}
           <div className="connectivity-chart" ref={barRef}>
+            <div className="marker-host">
             <div className="connectivity-bar" role="group" aria-label="连通色带">
               {segments.map((segment) => {
                 const duration = Math.max(1, Date.parse(segment.to) - Date.parse(segment.from));
@@ -181,6 +191,8 @@ export function ConnectivityPanel({ deviceId, now }: Props) {
                   />
                 );
               })}
+            </div>
+            <ChangeMarkTrack markers={markers} from={drawFrom} to={drawTo} />
             </div>
             {hover && (
               <div className="trend-tip connectivity-tip" role="tooltip" style={{ left: hover.left }}>

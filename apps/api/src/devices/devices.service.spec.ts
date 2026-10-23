@@ -460,4 +460,62 @@ describe('DevicesService', () => {
     expect(empty.bars).toEqual([]);
     expect(prisma.deviceEvent.findMany).not.toHaveBeenCalled();
   });
+
+  it('marks finished firmware events and successful commands, and skips upgrade progress', async () => {
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1' }),
+      },
+      deviceEvent: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            eventTime: new Date('2026-10-20T00:00:00.000Z'),
+            payload: { bizData: { upgradeStatus: 3, oldVersion: '1.0.0', version: '1.0.2' } },
+          },
+          {
+            eventTime: new Date('2026-10-19T00:00:00.000Z'),
+            payload: { upgradeStatus: 2, progress: 40 },
+          },
+        ]),
+      },
+      commandLog: {
+        findMany: jest.fn().mockResolvedValue([
+          { code: 'switch', value: true, createdAt: new Date('2026-10-22T03:00:00.000Z') },
+        ]),
+      },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const page = await svc.changeMarkers('vdevo1', {
+      from: '2026-10-16T00:00:00.000Z',
+      to: '2026-10-23T00:00:00.000Z',
+    });
+
+    expect(prisma.deviceEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          deviceId: 'internal-1',
+          bizCode: { in: ['deviceOtaProgress', 'upgradeStatus'] },
+        }),
+      }),
+    );
+    expect(prisma.commandLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ deviceId: 'internal-1', success: true }),
+      }),
+    );
+    expect(page.markers).toEqual([
+      {
+        t: '2026-10-20T00:00:00.000Z',
+        kind: 'firmware',
+        label: '固件升级',
+        detail: '1.0.0 → 1.0.2',
+      },
+      {
+        t: '2026-10-22T03:00:00.000Z',
+        kind: 'command',
+        label: '指令 switch',
+        detail: 'true',
+      },
+    ]);
+  });
 });

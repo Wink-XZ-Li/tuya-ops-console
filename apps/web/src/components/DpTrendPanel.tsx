@@ -12,6 +12,7 @@ import {
   trendWindow,
   writeTrendSelection,
 } from '../utils/dp-trend';
+import { changeMarkerLegend, useChangeMarkers } from './ChangeMarkTrack';
 import { DpTrendChart, type DpTrendFault, type DpTrendSeries } from './DpTrendChart';
 
 type TrendResponse = {
@@ -185,6 +186,14 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
     };
   }, [compare, deviceId, expanded, domain]);
 
+  const markers = useChangeMarkers(
+    deviceId,
+    domain?.from ?? '',
+    domain?.to ?? '',
+    Boolean(domain?.from && domain?.to),
+  );
+  const markerNote = changeMarkerLegend(markers);
+
   const trendSeries = series.filter((item) => !isHiddenTrendDp({ code: item.dpId, name: item.name }));
   const checked = selected ?? trendSeries.map((item) => item.dpId);
   const options =
@@ -285,6 +294,7 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
             </p>
           ) : domain ? (
             <div className="dp-trend-stack">
+              {markerNote && hasPoints && <p className="hint change-legend">{markerNote}</p>}
               {trendSeries.map((item, index) =>
                 item.points.length > 0 ? (
                   <DpTrendChart
@@ -294,6 +304,7 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
                     from={domain.from}
                     to={domain.to}
                     faults={compare ? faults : []}
+                    markers={markers}
                   />
                 ) : (
                   <p key={item.dpId} className="hint">

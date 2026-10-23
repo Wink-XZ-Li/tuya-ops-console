@@ -1543,6 +1543,66 @@ table.data tbody tr.no-click {
   stroke: var(--danger);
 }
 
+.change-line {
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+.change-line.is-firmware {
+  stroke: #9a3412;
+}
+
+.change-line.is-command {
+  stroke: #3d5a80;
+}
+
+.marker-host {
+  position: relative;
+}
+
+.change-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.change-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  transform: translateX(-5px);
+  pointer-events: auto;
+  background: transparent;
+}
+
+.change-mark::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+
+.change-mark.is-firmware::before {
+  background: #9a3412;
+}
+
+.change-mark.is-command::before {
+  background: #3d5a80;
+}
+
+.change-mark-tip {
+  pointer-events: none;
+  transform: translateX(-50%);
+  z-index: 3;
+}
+
+.change-legend {
+  margin: 0.2rem 0 0.45rem;
+}
+
 .usage .section-bar {
   flex-wrap: wrap;
 }

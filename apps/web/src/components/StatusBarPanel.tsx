@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, qs } from '../api/client';
 import { TREND_MAX_RANGE_MS, type TrendPreset, trendWindow } from '../utils/dp-trend';
 import { statusBarDpsForProduct, statusTone } from '../utils/status-bars';
+import { ChangeMarkTrack, type ChangeMarker, changeMarkerLegend, useChangeMarkers } from './ChangeMarkTrack';
 
 type StatusSegment = {
   tStart: string;
@@ -90,6 +91,18 @@ export function StatusBarPanel({ deviceId, productId, now }: Props) {
     };
   }, [configured.length, deviceId, requested]);
 
+  const rangeFrom = 'error' in requested ? '' : requested.from;
+  const rangeTo = 'error' in requested ? '' : requested.to;
+  const drawFrom = windowFrom || rangeFrom;
+  const drawTo = windowTo || rangeTo;
+  const markers = useChangeMarkers(
+    deviceId,
+    drawFrom,
+    drawTo,
+    configured.length > 0 && !('error' in requested) && Boolean(drawFrom && drawTo),
+  );
+  const markerNote = changeMarkerLegend(markers);
+
   if (configured.length === 0) return null;
 
   const allUnknown = bars.length > 0 && bars.every((bar) => bar.segments.every((segment) => segment.value == null));
@@ -131,9 +144,18 @@ export function StatusBarPanel({ deviceId, productId, now }: Props) {
       {error && <p className="error">{error}</p>}
       {!error && loading && bars.length === 0 && <p className="hint">加载中</p>}
       {!error && !loading && bars.length === 0 && <p className="hint">这段时间没有状态上报。</p>}
+      {!error && markerNote && bars.length > 0 && <p className="hint change-legend">{markerNote}</p>}
       {!error &&
         bars.map((bar) => (
-          <StatusRibbon key={bar.dpId} bar={bar} windowFrom={windowFrom} windowTo={windowTo} />
+          <StatusRibbon
+            key={bar.dpId}
+            bar={bar}
+            windowFrom={windowFrom}
+            windowTo={windowTo}
+            markers={markers}
+            drawFrom={drawFrom}
+            drawTo={drawTo}
+          />
         ))}
       {!error && allUnknown && <p className="hint">这段时间没有状态上报，记为未知。</p>}
     </section>
@@ -144,10 +166,16 @@ function StatusRibbon({
   bar,
   windowFrom,
   windowTo,
+  markers,
+  drawFrom,
+  drawTo,
 }: {
   bar: StatusBar;
   windowFrom: string;
   windowTo: string;
+  markers: ChangeMarker[];
+  drawFrom: string;
+  drawTo: string;
 }) {
   const chartRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ text: string; left: number } | null>(null);
@@ -175,6 +203,7 @@ function StatusRibbon({
       <div className="status-row-name">{bar.name}</div>
       <div>
         <div className="connectivity-chart" ref={chartRef}>
+          <div className="marker-host">
           <div className="connectivity-bar status-bar" role="group" aria-label={bar.name}>
             {bar.segments.map((segment) => {
               const duration = Math.max(1, Date.parse(segment.tEnd) - Date.parse(segment.tStart));
@@ -189,6 +218,8 @@ function StatusRibbon({
                 />
               );
             })}
+          </div>
+          <ChangeMarkTrack markers={markers} from={drawFrom} to={drawTo} />
           </div>
           {hover && (
             <div className="trend-tip connectivity-tip" role="tooltip" style={{ left: hover.left }}>

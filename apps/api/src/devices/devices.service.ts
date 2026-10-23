@@ -38,6 +38,7 @@ import {
 import { buildUsage, usageBucketForRange, type UsageBucket } from './usage';
 import { usageMetricsForProduct } from './usage-metrics';
 import { CONNECTIVITY_BIZ_CODES, buildConnectivityTimeline } from './connectivity';
+import { FIRMWARE_BIZ_CODES, buildChangeMarkers } from './change-markers';
 import {
   buildStatusTimeline,
   normalizeStatusValue,
@@ -506,6 +507,63 @@ export class DevicesService {
           labelOf: (value) => statusLabel(dp, value),
         }),
       })),
+    };
+  }
+
+  /**
+   * Firmware upgrades and successful remote commands inside the chart window.
+   * The live upgrade-infos snapshot has no change time, so it is not used.
+   */
+  async changeMarkers(
+    deviceId: string,
+    query: { from?: string; to?: string },
+    now = new Date(),
+  ) {
+    const device = await this.prisma.device.findUnique({
+      where: { deviceId },
+      select: { id: true },
+    });
+    if (!device) {
+      throw new NotFoundException(`Device ${deviceId} not found`);
+    }
+
+    const to = parseHistoryInstant(query.to, '结束时间') ?? now;
+    const from = parseHistoryInstant(query.from, '开始时间') ?? new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (from.getTime() >= to.getTime()) {
+      throw new BadRequestException('开始时间不能晚于结束时间');
+    }
+    if (to.getTime() - from.getTime() > TREND_MAX_RANGE_MS) {
+      throw new BadRequestException('区间不能超过 90 天');
+    }
+
+    const [events, commands] = await Promise.all([
+      this.prisma.deviceEvent.findMany({
+        where: {
+          deviceId: device.id,
+          eventTime: { gte: from, lte: to },
+          bizCode: { in: [...FIRMWARE_BIZ_CODES] },
+        },
+        orderBy: { eventTime: 'asc' },
+        select: { payload: true, eventTime: true },
+        take: 500,
+      }),
+      this.prisma.commandLog.findMany({
+        where: { deviceId: device.id, success: true, createdAt: { gte: from, lte: to } },
+        orderBy: { createdAt: 'asc' },
+        select: { code: true, value: true, createdAt: true },
+        take: 200,
+      }),
+    ]);
+
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      ...buildChangeMarkers({
+        from,
+        to,
+        firmwareEvents: events,
+        commands: commands.map((command) => ({ ...command, success: true })),
+      }),
     };
   }
 

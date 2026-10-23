@@ -112,6 +112,18 @@ describe('DpTrendPanel', () => {
           series,
         };
       }
+      if (path.includes('/change-markers')) {
+        return {
+          markers: [
+            {
+              t: '2026-10-20T00:00:00.000Z',
+              kind: 'firmware',
+              label: '固件升级',
+              detail: '1.0.0 → 1.0.2',
+            },
+          ],
+        };
+      }
       if (path.includes('/fault-history')) {
         return {
           items: [
@@ -170,6 +182,14 @@ describe('DpTrendPanel', () => {
       expect(ticks[0]?.textContent?.trim()).not.toBe('');
     }
     expect(document.querySelector('[data-dp="ph"]')).toBeNull();
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-kind="firmware"]')).toHaveLength(2);
+    });
+    fireEvent.mouseEnter(document.querySelector('[data-dp="temp_out"] [data-kind="firmware"]')!);
+    const markerTip = screen.getByRole('tooltip').textContent ?? '';
+    expect(markerTip).toContain('固件升级');
+    expect(markerTip).toContain('1.0.0 → 1.0.2');
+    expect(markerTip).toContain('2026-10-20 08:00');
     expect(document.querySelector('[data-dp="lhd"]')).toBeNull();
     expect(document.querySelector('[data-dp="temp_set"]')).toBeNull();
     expect(document.querySelector('[data-dp="gas_consumption"]')).toBeNull();
