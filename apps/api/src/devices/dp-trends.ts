@@ -165,13 +165,44 @@ const NON_TREND_DP_CODES = new Set([
   'od',
 ]);
 
+/**
+ * Setpoint temperatures, not measured trends. Confirmed codes in PRODUCT_DP_SCHEMAS.json:
+ * temp_set (ids 2/3/5/7/9/103), temp_set_f (8/14/17/20/24/25), dhw_temp_set (3),
+ * heat_temp_set (21), heat_temp_set_f (22), cool_temp_set (23), cool_temp_set_f (24),
+ * steam_cook_temp (45), oven_cook_temp (55), and the matching upper/lower limits.
+ */
+const SETPOINT_TEMP_CODES = new Set([
+  'temp_set',
+  'temp_set_f',
+  'dhw_temp_set',
+  'heat_temp_set',
+  'heat_temp_set_f',
+  'cool_temp_set',
+  'cool_temp_set_f',
+  'steam_cook_temp',
+  'oven_cook_temp',
+  'upper_temp',
+  'upper_temp_f',
+  'lower_temp',
+  'lower_temp_f',
+  'maxtemp_heat_set',
+  'maxtemp_heat_set_f',
+  'mintemp_heat_set',
+  'mintemp_heat_set_f',
+  'maxtemp_cool_set',
+  'maxtemp_cool_set_f',
+  'mintemp_cool_set',
+  'mintemp_cool_set_f',
+]);
+
 export function isHiddenTrendDp(dp: { code: string; name?: string | null }): boolean {
   const code = dp.code.trim().toLowerCase();
-  if (NON_TREND_DP_CODES.has(code)) return true;
+  if (NON_TREND_DP_CODES.has(code) || SETPOINT_TEMP_CODES.has(code)) return true;
   const name = dp.name?.trim() ?? '';
   if (!name) return false;
   if (/^ph(?![a-z])/i.test(name) && /比例阀|电流/.test(name)) return true;
   if (/lh-?d/i.test(name) && /比例阀|电流|大气/.test(name)) return true;
+  if (/目标温度|设置温度|温度设置|水温设置/.test(name)) return true;
   return false;
 }
 

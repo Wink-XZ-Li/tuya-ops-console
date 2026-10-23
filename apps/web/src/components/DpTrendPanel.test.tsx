@@ -50,6 +50,15 @@ const series = [
     unit: null,
     points: [{ t: '2026-10-20T00:00:00.000Z', avg: 90, min: 90, max: 90 }],
   },
+  {
+    dpId: 'temp_set',
+    name: '目标温度',
+    unit: '℃',
+    points: [
+      { t: '2026-10-20T00:00:00.000Z', avg: 45, min: 45, max: 45 },
+      { t: '2026-10-20T02:00:00.000Z', avg: 46, min: 46, max: 46 },
+    ],
+  },
 ];
 
 describe('DpTrendPanel', () => {
@@ -126,7 +135,12 @@ describe('DpTrendPanel', () => {
     await waitFor(() => {
       expect(document.querySelectorAll('[data-dp="temp_out"] circle')).toHaveLength(2);
     });
+    const charts = document.querySelectorAll('.dp-trend-chart');
+    expect(charts).toHaveLength(2);
     const series = document.querySelector('[data-dp="temp_out"]');
+    const other = document.querySelector('[data-dp="temp_in"]');
+    expect(series).not.toBe(other);
+    expect(series?.querySelector('svg')).not.toBe(other?.querySelector('svg'));
     const line = series?.querySelector('.dp-trend-line');
     const band = series?.querySelector('.dp-trend-band');
     expect(series?.getAttribute('data-runs')).toBe('1');
@@ -135,11 +149,14 @@ describe('DpTrendPanel', () => {
     expect(band?.tagName.toLowerCase()).toBe('polygon');
     expect(band?.getAttribute('points')?.trim().split(/\s+/)).toHaveLength(4);
     expect(series?.querySelector('path')).toBeNull();
-    expect(document.querySelectorAll('[data-dp="temp_out"] .dp-trend-line')).toHaveLength(1);
+    expect(series?.querySelectorAll('.dp-trend-line')).toHaveLength(1);
     expect(document.querySelector('[data-dp="ph"]')).toBeNull();
     expect(document.querySelector('[data-dp="lhd"]')).toBeNull();
+    expect(document.querySelector('[data-dp="temp_set"]')).toBeNull();
     expect(screen.queryByText(/PH采暖/)).not.toBeInTheDocument();
     expect(screen.queryByText(/LH-D/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/目标温度/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /目标温度/ })).not.toBeInTheDocument();
     expect(
       [...document.querySelectorAll('[data-avg]')].some((node) => node.getAttribute('data-avg') === '0'),
     ).toBe(false);
@@ -149,8 +166,9 @@ describe('DpTrendPanel', () => {
     await waitFor(() => {
       expect(document.querySelector('[data-role="fault"]')).toBeTruthy();
     });
-    const point = document.querySelector('[data-t="2026-10-20T00:00:00.000Z"]');
-    const fault = document.querySelector('[data-start="2026-10-20T00:00:00.000Z"]');
+    const chart = document.querySelector('[data-dp="temp_out"]');
+    const point = chart?.querySelector('[data-t="2026-10-20T00:00:00.000Z"]');
+    const fault = chart?.querySelector('[data-start="2026-10-20T00:00:00.000Z"]');
     expect(point?.getAttribute('data-x')).toBe(fault?.getAttribute('data-x'));
     const faultCall = api.mock.calls.map((call) => String(call[0])).find((path) => path.includes('/fault-history'));
     expect(faultCall).toContain('from=2026-10-16T00%3A00%3A00.000Z');

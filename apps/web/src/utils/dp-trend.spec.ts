@@ -44,8 +44,14 @@ describe('dp trend selection memory', () => {
     expect(readTrendSelection('pid-c')).toEqual(['temp_out']);
     writeTrendSelection('pid-d', ['ph', 'lhd']);
     expect(readTrendSelection('pid-d')).toBeNull();
+    writeTrendSelection('pid-e', ['temp_set', 'temp_out']);
+    expect(readTrendSelection('pid-e')).toEqual(['temp_out']);
     expect(isHiddenTrendDp({ code: 'ph', name: 'PH采暖最大比例阀电流' })).toBe(true);
     expect(isHiddenTrendDp({ code: 'lhd', name: 'LH-D（大气式）卫浴最大比例阀电流' })).toBe(true);
+    expect(isHiddenTrendDp({ code: 'temp_set', name: '目标温度' })).toBe(true);
+    expect(isHiddenTrendDp({ code: 'dhw_temp_set', name: '卫浴温度设置' })).toBe(true);
+    expect(isHiddenTrendDp({ code: 'steam_cook_temp', name: '蒸箱温度设置' })).toBe(true);
     expect(isHiddenTrendDp({ code: 'temp_current', name: '当前温度' })).toBe(false);
+    expect(isHiddenTrendDp({ code: 'steam_temp_current', name: '蒸箱当前温度' })).toBe(false);
   });
 });

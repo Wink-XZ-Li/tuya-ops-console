@@ -1451,6 +1451,22 @@ table.data tbody tr.no-click {
   margin: 0;
 }
 
+.dp-trend-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.dp-trend-chart {
+  margin: 0;
+}
+
+.dp-trend-caption {
+  margin: 0 0 0.2rem;
+  font-size: 13px;
+  font-weight: 650;
+}
+
 .dp-trend-tools,
 .dp-trend-choices,
 .dp-trend-legend {

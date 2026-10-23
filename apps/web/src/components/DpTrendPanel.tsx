@@ -55,7 +55,6 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [selected, setSelected] = useState<string[] | null>(() => readTrendSelection(productId));
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [compare, setCompare] = useState(false);
   const [series, setSeries] = useState<DpTrendSeries[]>([]);
   const [domain, setDomain] = useState<{ from: string; to: string; bucket: TrendBucket } | null>(null);
@@ -72,7 +71,6 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
 
   useEffect(() => {
     setSelected(readTrendSelection(productId));
-    setHidden(new Set());
   }, [productId]);
 
   const requestedWindow = useMemo(() => {
@@ -286,21 +284,24 @@ export function DpTrendPanel({ deviceId, productId, now }: Props) {
               这段时间没有数值上报。若设备长期离线，或桥接没有把属性事件写进来，曲线会是空的。
             </p>
           ) : domain ? (
-            <DpTrendChart
-              series={trendSeries}
-              hidden={hidden}
-              from={domain.from}
-              to={domain.to}
-              faults={compare ? faults : []}
-              onToggle={(dpId) => {
-                setHidden((current) => {
-                  const next = new Set(current);
-                  if (next.has(dpId)) next.delete(dpId);
-                  else next.add(dpId);
-                  return next;
-                });
-              }}
-            />
+            <div className="dp-trend-stack">
+              {trendSeries.map((item, index) =>
+                item.points.length > 0 ? (
+                  <DpTrendChart
+                    key={item.dpId}
+                    series={item}
+                    colorIndex={index}
+                    from={domain.from}
+                    to={domain.to}
+                    faults={compare ? faults : []}
+                  />
+                ) : (
+                  <p key={item.dpId} className="hint">
+                    {item.name}：这段时间没有数值上报
+                  </p>
+                ),
+              )}
+            </div>
           ) : null}
         </>
       )}

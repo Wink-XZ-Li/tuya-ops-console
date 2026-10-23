@@ -23,15 +23,14 @@ const COLORS = ['#1b6c80', '#1e7b4f', '#b45309', '#3b4da3', '#9f1239', '#0f766e'
 const PAD = { top: 16, right: 16, bottom: 28, left: 48 };
 
 type Props = {
-  series: DpTrendSeries[];
-  hidden: ReadonlySet<string>;
+  series: DpTrendSeries;
   from: string;
   to: string;
   faults: DpTrendFault[];
-  onToggle: (dpId: string) => void;
+  colorIndex?: number;
 };
 
-export function DpTrendChart({ series, hidden, from, to, faults, onToggle }: Props) {
+export function DpTrendChart({ series, from, to, faults, colorIndex = 0 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hoverT, setHoverT] = useState<string | null>(null);
@@ -57,21 +56,23 @@ export function DpTrendChart({ series, hidden, from, to, faults, onToggle }: Pro
   const plotW = Math.max(1, width - PAD.left - PAD.right);
   const plotH = height - PAD.top - PAD.bottom;
 
-  const visible = series.filter((item) => !hidden.has(item.dpId) && item.points.length > 0);
+  const points = useMemo(
+    () => [...series.points].sort((a, b) => Date.parse(a.t) - Date.parse(b.t)),
+    [series.points],
+  );
+  const color = COLORS[colorIndex % COLORS.length];
   const yDomain = useMemo(() => {
     let min = Infinity;
     let max = -Infinity;
-    for (const item of visible) {
-      for (const point of item.points) {
-        min = Math.min(min, point.min);
-        max = Math.max(max, point.max);
-      }
+    for (const point of points) {
+      min = Math.min(min, point.min);
+      max = Math.max(max, point.max);
     }
     if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 1 };
     if (min === max) return { min: min - 1, max: max + 1 };
     const pad = (max - min) * 0.08;
     return { min: min - pad, max: max + pad };
-  }, [visible]);
+  }, [points]);
 
   function yAt(value: number): number {
     const span = yDomain.max - yDomain.min || 1;
@@ -83,36 +84,32 @@ export function DpTrendChart({ series, hidden, from, to, faults, onToggle }: Pro
     return trendX(clipped, fromMs, toMs, PAD.left, plotW);
   }
 
-  const hoverPoints = hoverT
-    ? visible.flatMap((item) => {
-        const point = item.points.find((row) => row.t === hoverT);
-        return point ? [{ ...item, point }] : [];
-      })
-    : [];
+  const hoverPoint = hoverT ? points.find((row) => row.t === hoverT) : undefined;
 
   function onMove(event: React.MouseEvent<SVGSVGElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     let best: { t: string; dist: number } | null = null;
-    for (const item of visible) {
-      for (const point of item.points) {
-        const dist = Math.abs(xAt(Date.parse(point.t)) - x);
-        if (!best || dist < best.dist) best = { t: point.t, dist };
-      }
+    for (const point of points) {
+      const dist = Math.abs(xAt(Date.parse(point.t)) - x);
+      if (!best || dist < best.dist) best = { t: point.t, dist };
     }
     setHoverT(best?.t ?? null);
   }
 
   const tipLeft = hoverT ? Math.min(Math.max(xAt(Date.parse(hoverT)), 72), Math.max(72, width - 72)) : 0;
 
+  const label = `${series.name}${series.unit ? ` ${series.unit}` : ''}`;
+
   return (
-    <div className="trend-chart dp-trend-chart" ref={wrapRef}>
-      {width > 0 && (
+    <div className="trend-chart dp-trend-chart" ref={wrapRef} data-dp={series.dpId} data-runs="1">
+      <p className="dp-trend-caption">{label}</p>
+      {width > 0 && points.length > 0 && (
         <svg
           width={width}
           height={height}
           role="img"
-          aria-label="参数走势，悬停可查看每个桶的均值和最小最大"
+          aria-label={`${label}走势，悬停可查看每个桶的均值和最小最大`}
           onMouseMove={onMove}
           onMouseLeave={() => setHoverT(null)}
         >
@@ -160,44 +157,20 @@ export function DpTrendChart({ series, hidden, from, to, faults, onToggle }: Pro
               </g>
             );
           })}
-          {series.map((item, index) => {
-            if (hidden.has(item.dpId) || item.points.length === 0) return null;
-            const color = COLORS[index % COLORS.length];
-            const points = [...item.points].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
-            return (
-              <g key={item.dpId} data-dp={item.dpId} data-runs="1">
-                <TrendRun run={points} color={color} name={item.name} xAt={xAt} yAt={yAt} />
-              </g>
-            );
-          })}
+          <g>
+            <TrendRun run={points} color={color} name={series.name} xAt={xAt} yAt={yAt} />
+          </g>
         </svg>
       )}
-      {hoverT && hoverPoints.length > 0 && (
+      {hoverT && hoverPoint && (
         <div className="trend-tip" style={{ left: tipLeft }}>
           <span>{new Date(hoverT).toLocaleString()}</span>
-          {hoverPoints.map((row) => (
-            <span key={row.dpId}>
-              {row.name} {row.point.avg}
-              {row.unit ? ` ${row.unit}` : ''}（{row.point.min}–{row.point.max}）
-            </span>
-          ))}
+          <span>
+            {series.name} {hoverPoint.avg}
+            {series.unit ? ` ${series.unit}` : ''}（{hoverPoint.min}–{hoverPoint.max}）
+          </span>
         </div>
       )}
-      <div className="dp-trend-legend">
-        {series.map((item, index) => (
-          <button
-            key={item.dpId}
-            type="button"
-            className={`dp-legend${hidden.has(item.dpId) ? ' is-off' : ''}`}
-            aria-pressed={!hidden.has(item.dpId)}
-            onClick={() => onToggle(item.dpId)}
-          >
-            <i style={{ background: COLORS[index % COLORS.length] }} />
-            {item.name}
-            {item.unit ? ` ${item.unit}` : ''}
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

@@ -18,6 +18,9 @@ const schema = [
   { id: 170, code: 'ph', name: 'PH采暖最大比例阀电流', type: 'value', values: { scale: 0 } },
   { id: 171, code: 'lhd', name: 'LH-D（大气式）卫浴最大比例阀电流', type: 'value', values: { scale: 0 } },
   { id: 172, code: 'lhq', name: 'LH-Q（全预混）卫浴最大风机转速', type: 'value', values: { scale: 0 } },
+  { id: 9, code: 'temp_set', name: '目标温度', type: 'value', values: { scale: 0, unit: '℃' } },
+  { id: 45, code: 'steam_cook_temp', name: '蒸箱温度设置', type: 'value', values: { scale: 0, unit: '℃' } },
+  { id: 19, code: 'upper_temp', name: '设置温度上限', type: 'value', values: { scale: 0, unit: '℃' } },
 ];
 
 describe('dp trend buckets', () => {
@@ -141,6 +144,44 @@ describe('dp trend aggregation', () => {
       schema,
       defaults: [],
       requested: ['170', 'lhd', 'temp'],
+      from,
+      to,
+      bucket: '1h',
+    });
+    expect(explicit.map((series) => series.dpId)).toEqual(['temp']);
+  });
+
+  it('keeps setpoint temperatures out of defaults, top 3, and explicit requests', () => {
+    const events = [
+      ...Array.from({ length: 6 }, () => ({
+        eventTime: from,
+        payload: {
+          status: [
+            { code: 'temp_set', value: 45 },
+            { code: 'steam_cook_temp', value: 80 },
+            { code: 'upper_temp', value: 60 },
+          ],
+        },
+      })),
+      { eventTime: from, payload: { status: [{ code: 'temp', value: 400 }] } },
+      { eventTime: from, payload: { status: [{ dpId: 9, value: 46 }] } },
+    ];
+    const top = buildDpTrends({
+      events,
+      schema,
+      defaults: ['temp_set', 'steam_cook_temp'],
+      requested: [],
+      from,
+      to,
+      bucket: '1h',
+    });
+    expect(top.map((series) => series.dpId)).toEqual(['temp']);
+
+    const explicit = buildDpTrends({
+      events,
+      schema,
+      defaults: [],
+      requested: ['9', '45', '19', 'temp'],
       from,
       to,
       bucket: '1h',
