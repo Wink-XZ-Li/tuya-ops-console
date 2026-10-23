@@ -8,3 +8,8 @@ dist
 coverage
 apps/api/prisma/*.db
 .DS_Store
+
+# Local runtime / machine tooling
+logs/
+.taste-skill/
+scripts/api-watchdog.sh
