@@ -773,6 +773,17 @@ table.data tbody tr.no-click {
   font-size: 0.88rem;
 }
 
+.login-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.login-actions .btn {
+  width: 100%;
+  justify-content: center;
+}
+
 .form-row {
   display: flex;
   flex-direction: column;
