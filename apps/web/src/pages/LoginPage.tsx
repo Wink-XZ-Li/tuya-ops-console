@@ -18,8 +18,8 @@ const GUEST_PASSWORD = import.meta.env.VITE_GUEST_PASSWORD || 'ChangeMe123!';
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('ChangeMe123!');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<'form' | 'guest' | null>(null);
 
@@ -52,7 +52,7 @@ export function LoginPage() {
 
   return (
     <div className="login-wrap">
-      <form className="login-card" onSubmit={onSubmit}>
+      <form className="login-card" onSubmit={onSubmit} autoComplete="off">
         <div className="brand" style={{ marginBottom: '0.25rem' }}>
           <span className="brand-mark" aria-hidden />
           Ops Console
@@ -65,7 +65,7 @@ export function LoginPage() {
             id="username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            autoComplete="username"
+            autoComplete="off"
             required
           />
         </div>
@@ -76,7 +76,7 @@ export function LoginPage() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
+            autoComplete="off"
             required
           />
         </div>

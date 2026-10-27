@@ -43,6 +43,52 @@ describe('LoginPage', () => {
     api.mockReset();
   });
 
+  it('starts with empty username and password fields', () => {
+    renderLogin();
+    const username = screen.getByLabelText('用户名');
+    const password = screen.getByLabelText('密码');
+    expect(username).toHaveValue('');
+    expect(password).toHaveValue('');
+    expect(username).toHaveAttribute('autocomplete', 'off');
+    expect(password).toHaveAttribute('autocomplete', 'off');
+  });
+
+  it('guest login uses in-memory credentials and leaves the inputs unchanged', async () => {
+    let resolveLogin: (value: {
+      accessToken: string;
+      role: string;
+      username: string;
+    }) => void = () => {};
+    api.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveLogin = resolve;
+        }),
+    );
+
+    renderLogin();
+    const username = screen.getByLabelText('用户名');
+    const password = screen.getByLabelText('密码');
+    fireEvent.change(username, { target: { value: 'typed-user' } });
+    fireEvent.change(password, { target: { value: 'typed-pass' } });
+    fireEvent.click(screen.getByRole('button', { name: '访客一键登录' }));
+
+    expect(api).toHaveBeenCalledWith('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'readonly', password: 'ChangeMe123!' }),
+    });
+    expect(username).toHaveValue('typed-user');
+    expect(password).toHaveValue('typed-pass');
+
+    resolveLogin({
+      accessToken: 'real-token',
+      role: 'readonly',
+      username: 'readonly',
+    });
+    expect(await screen.findByText('已进入系统')).toBeInTheDocument();
+    expect(getToken()).toBe('real-token');
+  });
+
   it('logs in as readonly through the login API when 访客一键登录 is clicked', async () => {
     api.mockResolvedValue({
       accessToken: 'real-token',
@@ -75,6 +121,8 @@ describe('LoginPage', () => {
       ),
     ).toBeInTheDocument();
     expect(getToken()).toBeNull();
+    expect(screen.getByLabelText('用户名')).toHaveValue('');
+    expect(screen.getByLabelText('密码')).toHaveValue('');
     expect(screen.queryByText('已进入系统')).not.toBeInTheDocument();
   });
 
@@ -86,6 +134,8 @@ describe('LoginPage', () => {
     });
 
     renderLogin();
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'admin' } });
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'ChangeMe123!' } });
     fireEvent.click(screen.getByRole('button', { name: '登录' }));
 
     expect(await screen.findByText('已进入系统')).toBeInTheDocument();
