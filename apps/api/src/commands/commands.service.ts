@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { getProductDps } from '../devices/product-dp-schemas';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,6 +20,14 @@ function mapSchemaType(type: string): string {
   if (t === 'bool' || t === 'boolean') return 'boolean';
   if (t === 'value') return 'integer';
   return t;
+}
+
+function instructionCodeSet(functions: Array<{ code?: string }>): Set<string> {
+  return new Set(
+    functions
+      .map((fn) => fn.code)
+      .filter((code): code is string => typeof code === 'string' && code.length > 0),
+  );
 }
 
 @Injectable()
@@ -97,11 +105,15 @@ export class CommandsService {
       });
     }
 
+    // 涂鸦标准指令集之外的属性只读。指令集内保留合并后的 mode（含原本的 ro）。
+    const instructionCodes = instructionCodeSet(standard);
+
     return [...byCode.values()]
       .map((fn) => {
         const alias = aliasByCode.get(fn.code);
         return {
           ...fn,
+          mode: instructionCodes.has(fn.code) ? fn.mode : 'ro',
           alias: alias?.alias,
           groupName: alias?.groupName ?? fn.groupName,
           sortOrder: alias?.sortOrder ?? fn.sortOrder,
@@ -115,6 +127,7 @@ export class CommandsService {
 
   async send(deviceId: string, adminUserId: string, dto: SendCommandDto) {
     const device = await this.requireDevice(deviceId);
+    await this.assertInStandardInstructionSet(deviceId, dto.code);
 
     let tuyaResponse: unknown;
     let success = false;
@@ -186,6 +199,18 @@ export class CommandsService {
     ]);
 
     return { items, total, page, pageSize };
+  }
+
+  private async assertInStandardInstructionSet(deviceId: string, code: string) {
+    let functions: Array<{ code?: string }>;
+    try {
+      functions = await this.tuya.getStandardFunctions(deviceId);
+    } catch {
+      throw new BadRequestException(`无法获取设备标准指令集，已拒绝下发 ${code}`);
+    }
+    if (!instructionCodeSet(functions).has(code)) {
+      throw new BadRequestException(`${code} 不在该设备标准指令集中，禁止下发`);
+    }
   }
 
   private async requireDevice(deviceId: string) {
