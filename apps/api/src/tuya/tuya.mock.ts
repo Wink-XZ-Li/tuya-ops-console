@@ -93,6 +93,14 @@ export class TuyaMockClient implements TuyaClient {
     return { success: true, mock: true };
   }
 
+  async issueProperties(
+    deviceId: string,
+    properties: Record<string, unknown>,
+  ): Promise<unknown> {
+    this.logger.log(`[mock] issueProperties ${deviceId}: ${JSON.stringify(properties)}`);
+    return { success: true, mock: true };
+  }
+
   async listDevices(
     pageOrCursor: { lastId?: string; pageSize?: number } = {},
   ): Promise<{ list: TuyaDeviceSummary[]; total: number; nextLastId?: string }> {

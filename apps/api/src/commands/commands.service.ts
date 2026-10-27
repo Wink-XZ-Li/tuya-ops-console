@@ -22,12 +22,10 @@ function mapSchemaType(type: string): string {
   return t;
 }
 
-function instructionCodeSet(functions: Array<{ code?: string }>): Set<string> {
-  return new Set(
-    functions
-      .map((fn) => fn.code)
-      .filter((code): code is string => typeof code === 'string' && code.length > 0),
-  );
+/** rw/wr 可下发。明确不含 w 的 mode（如 ro）只读。缺省视为可写，与状态集一致。 */
+export function isWritableMode(mode?: string): boolean {
+  if (mode == null || mode.trim() === '') return true;
+  return mode.toLowerCase().includes('w');
 }
 
 @Injectable()
@@ -92,6 +90,7 @@ export class CommandsService {
           name: existing.name ?? fn.name,
           type: existing.type ?? fn.type,
           values: existing.values ?? fn.values,
+          // 已有物模型或本地 schema 的 mode 优先，不用标准指令集覆盖成可写。
           mode: existing.mode ?? fn.mode ?? 'rw',
         });
         continue;
@@ -105,15 +104,13 @@ export class CommandsService {
       });
     }
 
-    // 涂鸦标准指令集之外的属性只读。指令集内保留合并后的 mode（含原本的 ro）。
-    const instructionCodes = instructionCodeSet(standard);
-
+    // 可写性看物模型 accessMode / 本地 schema mode（rw 可下发，ro 只读）。
+    // 不在标准指令集中的属性不再强制只读，否则壁挂炉 DP170～199 等工程参数无法下发。
     return [...byCode.values()]
       .map((fn) => {
         const alias = aliasByCode.get(fn.code);
         return {
           ...fn,
-          mode: instructionCodes.has(fn.code) ? fn.mode : 'ro',
           alias: alias?.alias,
           groupName: alias?.groupName ?? fn.groupName,
           sortOrder: alias?.sortOrder ?? fn.sortOrder,
@@ -127,17 +124,20 @@ export class CommandsService {
 
   async send(deviceId: string, adminUserId: string, dto: SendCommandDto) {
     const device = await this.requireDevice(deviceId);
-    await this.assertInStandardInstructionSet(deviceId, dto.code);
+    await this.assertWritable(deviceId, dto.code);
 
     let tuyaResponse: unknown;
     let success = false;
     try {
-      tuyaResponse = await this.tuya.sendStandardCommand(deviceId, [
-        { code: dto.code, value: dto.value },
-      ]);
+      // 全部属性（标准指令与工程参数）统一走 IoT Core properties/issue。
+      // 工程参数误下发会改变设备运行参数，与标准指令集 commands 不是同一条路径。
+      tuyaResponse = await this.tuya.issueProperties(deviceId, {
+        [dto.code]: dto.value,
+      });
       success = true;
     } catch (error) {
-      tuyaResponse = { error: String(error) };
+      const message = error instanceof Error ? error.message : String(error);
+      tuyaResponse = { error: message };
     }
 
     await this.prisma.commandLog.create({
@@ -201,15 +201,14 @@ export class CommandsService {
     return { items, total, page, pageSize };
   }
 
-  private async assertInStandardInstructionSet(deviceId: string, code: string) {
-    let functions: Array<{ code?: string }>;
-    try {
-      functions = await this.tuya.getStandardFunctions(deviceId);
-    } catch {
-      throw new BadRequestException(`无法获取设备标准指令集，已拒绝下发 ${code}`);
+  private async assertWritable(deviceId: string, code: string) {
+    const functions = await this.getFunctions(deviceId);
+    const fn = functions.find((item) => item.code === code);
+    if (!fn) {
+      throw new BadRequestException(`${code} 不在该设备物模型或功能定义中，禁止下发`);
     }
-    if (!instructionCodeSet(functions).has(code)) {
-      throw new BadRequestException(`${code} 不在该设备标准指令集中，禁止下发`);
+    if (!isWritableMode(fn.mode)) {
+      throw new BadRequestException(`${code} 为只读属性，禁止下发`);
     }
   }
 

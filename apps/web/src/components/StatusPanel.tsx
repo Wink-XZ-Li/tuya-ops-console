@@ -65,6 +65,14 @@ function isWritable(fn: DeviceFunction): boolean {
   return mode.includes('w') || mode === 'rw' || mode === 'wr';
 }
 
+function formatIssueError(code: string, tuyaResponse: unknown): string {
+  if (tuyaResponse && typeof tuyaResponse === 'object' && 'error' in tuyaResponse) {
+    const error = (tuyaResponse as { error?: unknown }).error;
+    if (error != null && String(error).length > 0) return `下发失败 ${code}：${error}`;
+  }
+  return `下发失败 ${code}`;
+}
+
 const STATUS_PREVIEW_ROWS = 10;
 
 export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent }: Props) {
@@ -114,14 +122,18 @@ export function StatusPanel({ deviceId, functions, statusJson, disabled, onSent 
     setMessage(null);
     setError(null);
     try {
-      const res = await api<{ success: boolean }>(
+      const res = await api<{ success: boolean; tuyaResponse?: unknown }>(
         `/api/devices/${encodeURIComponent(deviceId)}/commands`,
         {
           method: 'POST',
           body: JSON.stringify({ code, value: drafts[code] }),
         },
       );
-      setMessage(res.success ? `已下发 ${code}` : `下发失败 ${code}`);
+      if (res.success) {
+        setMessage(`已下发 ${code}`);
+      } else {
+        setError(formatIssueError(code, res.tuyaResponse));
+      }
       onSent?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

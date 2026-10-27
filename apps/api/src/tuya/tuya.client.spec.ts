@@ -50,6 +50,27 @@ describe('propertiesFromThingModel', () => {
   });
 });
 
+describe('TuyaLiveClient.issueProperties', () => {
+  it('posts every property to the IoT Core shadow issue endpoint', async () => {
+    const request = jest.fn(async () => ({ success: true, result: true }));
+    const client = new TuyaLiveClient({ request } as unknown as TuyaContext);
+    await expect(client.issueProperties('dev-1', { ph: 122, switch: true })).resolves.toBe(true);
+    expect(request).toHaveBeenCalledWith({
+      method: 'POST',
+      path: '/v2.0/cloud/thing/dev-1/shadow/properties/issue',
+      body: { properties: { ph: 122, switch: true } },
+    });
+  });
+
+  it('throws the Tuya error when issue fails', async () => {
+    const request = jest.fn(async () => ({ success: false, code: 2008, msg: 'not support' }));
+    const client = new TuyaLiveClient({ request } as unknown as TuyaContext);
+    await expect(client.issueProperties('dev-1', { ph: 122 })).rejects.toThrow(
+      'Tuya issueProperties failed for dev-1: [2008] not support',
+    );
+  });
+});
+
 describe('TuyaLiveClient.getDeviceSignal', () => {
   it('uses the latest type-8 log when the wifi signal sample is empty', async () => {
     const request = jest.fn(async (args: { path: string; query?: Record<string, string> }) => {
@@ -126,6 +147,12 @@ describe('TuyaMockClient', () => {
     const result = await client.sendStandardCommand('demo-001', [
       { code: 'switch', value: true },
     ]);
+    expect(result).toEqual({ success: true, mock: true });
+  });
+
+  it('issueProperties returns mock success without network', async () => {
+    const client = new TuyaMockClient();
+    const result = await client.issueProperties('demo-001', { switch: true, ph: 122 });
     expect(result).toEqual({ success: true, mock: true });
   });
 

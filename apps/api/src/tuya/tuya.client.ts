@@ -141,6 +141,15 @@ export interface TuyaClient {
     deviceId: string,
     commands: Array<{ code: string; value: unknown }>,
   ): Promise<unknown>;
+  /**
+   * IoT Core 属性下发：POST /v2.0/cloud/thing/{id}/shadow/properties/issue。
+   * 状态集里每一个可写属性都走这里，不再用标准指令集 commands。
+   * 工程参数（壁挂炉 DP170～199 等）与 switch/temp_set 同一条路径；误下发会改设备运行参数。
+   */
+  issueProperties(
+    deviceId: string,
+    properties: Record<string, unknown>,
+  ): Promise<unknown>;
   /** Cloud project devices, all products. */
   listDevices(pageOrCursor?: {
     lastId?: string;
@@ -421,6 +430,25 @@ export class TuyaLiveClient implements TuyaClient {
       const code = (res as { code?: number }).code;
       const msg = (res as { msg?: string }).msg ?? 'unknown';
       throw new Error(`Tuya sendStandardCommand failed for ${deviceId}: [${code}] ${msg}`);
+    }
+    return res.result;
+  }
+
+  async issueProperties(
+    deviceId: string,
+    properties: Record<string, unknown>,
+  ): Promise<unknown> {
+    // 与 POST /v1.0/devices/{id}/commands 不是同一条路径。标准指令集往往只有
+    // switch/temp_set 等少数 code，工程参数走 commands 会 2008。
+    const res = await this.context.request({
+      method: 'POST',
+      path: `/v2.0/cloud/thing/${deviceId}/shadow/properties/issue`,
+      body: { properties },
+    });
+    if (!res.success) {
+      const code = (res as { code?: number }).code;
+      const msg = (res as { msg?: string }).msg ?? 'unknown';
+      throw new Error(`Tuya issueProperties failed for ${deviceId}: [${code}] ${msg}`);
     }
     return res.result;
   }
