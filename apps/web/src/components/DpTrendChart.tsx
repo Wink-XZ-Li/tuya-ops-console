@@ -19,7 +19,7 @@ export type DpTrendFault = {
   open: boolean;
 };
 
-const COLORS = ['#1b6c80', '#1e7b4f', '#b45309', '#3b4da3', '#9f1239', '#0f766e', '#7c3aed', '#57534e'];
+const COLORS = ['#1a1a1a', '#1e7b4f', '#b45309', '#3b4da3', '#9f1239', '#0f766e', '#7c3aed', '#57534e'];
 
 const PAD = { top: 16, right: 16, bottom: 36, left: 48 };
 

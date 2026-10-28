@@ -136,7 +136,7 @@ export function useAnalyticsRange() {
 
 export function MiniSparkline({
   values,
-  color = '#1b6c80',
+  color = '#1a1a1a',
   emptyHint = '暂无数据',
   valueLabel = '数值',
 }: {

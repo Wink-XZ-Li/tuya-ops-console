@@ -105,7 +105,7 @@ export function AppLayout() {
             <i className="on" />
             <i />
           </span>
-          涂鸦运维台
+          LetSmart 运维系统
         </div>
         <nav className="nav">
           <div className="nav-label">总览</div>

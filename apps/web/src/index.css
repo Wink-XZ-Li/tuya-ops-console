@@ -1,6 +1,6 @@
 :root {
-  /* Framed sheet. Frame is a low-chroma blue-grey for a device console; the sheet stays white. */
-  --ground: #e7eef1;
+  /* Light sheet. Frame is a neutral gray; cards stay white. Accent is charcoal. */
+  --ground: #e8e8e8;
   --bg: var(--ground);
   --bg-mist: var(--ground);
   --surface: #ffffff;
@@ -14,10 +14,10 @@
   --text: #131416;
   --muted: #5d5f60;
   --faint: #5d5f60;
-  --accent: #1b6c80;
-  --accent-hover: #145566;
-  --accent-soft: #e7f2f5;
-  --accent-line: #1b6c80;
+  --accent: #1a1a1a;
+  --accent-hover: #303030;
+  --accent-soft: #f3f3f3;
+  --accent-line: #1a1a1a;
   --positive: #1e7b4f;
   --danger: #c4242a;
   --warn: #92400e;
@@ -26,7 +26,7 @@
   --row-hover: #f4f6f8;
   --radius: 8px;
   --radius-control: 6px;
-  --font: "IBM Plex Sans", "PingFang SC", "Noto Sans SC", sans-serif;
+  --font: "Montserrat", "PingFang SC", "Noto Sans SC", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   --shadow-none: none;
   font-family: var(--font);
@@ -117,7 +117,7 @@ button {
   display: block;
   width: 4px;
   height: 8px;
-  background: #c5d0d4;
+  background: #cdcdcd;
 }
 
 .brand-bits i.on {
@@ -1793,7 +1793,7 @@ table.data tbody tr.no-click {
   width: 70%;
   max-width: 18px;
   min-height: 2px;
-  background: #1b6c80;
+  background: var(--accent);
   border-radius: 2px 2px 0 0;
 }
 
@@ -1934,7 +1934,7 @@ table.data tbody tr.no-click {
 
 .status-seg.is-v0,
 .status-swatch.is-v0 {
-  background: #1b6c80;
+  background: var(--accent);
 }
 
 .status-seg.is-v1,

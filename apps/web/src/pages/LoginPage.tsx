@@ -55,9 +55,9 @@ export function LoginPage() {
       <form className="login-card" onSubmit={onSubmit} autoComplete="off">
         <div className="brand" style={{ marginBottom: '0.25rem' }}>
           <span className="brand-mark" aria-hidden />
-          Ops Console
+          LetSmart
         </div>
-        <h1>涂鸦运维台</h1>
+        <h1>LetSmart 运维系统</h1>
         <p>本地 Demo 登录</p>
         <div className="form-row">
           <label htmlFor="username">用户名</label>
