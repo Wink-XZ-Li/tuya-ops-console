@@ -26,6 +26,8 @@ export class AnalyticsController {
     @Query('endDay') endDay?: string,
     @Query('productId') productId?: string,
     @Query('refresh') refresh?: string,
+    @Query('dataSource') dataSource?: string,
+    @Query('probe') probe?: string,
   ) {
     const range = resolveDefaultRange(startDay, endDay);
     try {
@@ -34,6 +36,8 @@ export class AnalyticsController {
         endDay: range.endDay,
         productId: productId?.trim() || undefined,
         refresh: refresh === '1' || refresh === 'true',
+        dataSource: parseDataSource(dataSource),
+        probe: parseProbe(probe),
       });
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : String(err));
@@ -46,6 +50,8 @@ export class AnalyticsController {
     @Query('startDay') startDay?: string,
     @Query('endDay') endDay?: string,
     @Query('productId') productId?: string,
+    @Query('dataSource') dataSource?: string,
+    @Query('probe') probe?: string,
   ) {
     const range = resolveDefaultRange(startDay, endDay);
     try {
@@ -53,6 +59,8 @@ export class AnalyticsController {
         startDay: range.startDay,
         endDay: range.endDay,
         productId: productId?.trim() || undefined,
+        dataSource: parseDataSource(dataSource),
+        probe: parseProbe(probe),
       });
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : String(err));
@@ -65,6 +73,8 @@ export class AnalyticsController {
     @Query('startDay') startDay?: string,
     @Query('endDay') endDay?: string,
     @Query('productId') productId?: string,
+    @Query('dataSource') dataSource?: string,
+    @Query('probe') probe?: string,
   ) {
     const range = resolveDefaultRange(startDay, endDay);
     try {
@@ -72,6 +82,8 @@ export class AnalyticsController {
         startDay: range.startDay,
         endDay: range.endDay,
         productId: productId?.trim() || undefined,
+        dataSource: parseDataSource(dataSource),
+        probe: parseProbe(probe),
       });
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : String(err));
@@ -84,6 +96,8 @@ export class AnalyticsController {
     @Query('startDay') startDay?: string,
     @Query('endDay') endDay?: string,
     @Query('productId') productId?: string,
+    @Query('dataSource') dataSource?: string,
+    @Query('probe') probe?: string,
   ) {
     const range = resolveDefaultRange(startDay, endDay);
     try {
@@ -91,6 +105,8 @@ export class AnalyticsController {
         startDay: range.startDay,
         endDay: range.endDay,
         productId: productId?.trim() || undefined,
+        dataSource: parseDataSource(dataSource),
+        probe: parseProbe(probe),
       });
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : String(err));
@@ -141,6 +157,17 @@ export class AnalyticsController {
   async getReport(@Param('id') id: string) {
     return this.analytics.getReport(id);
   }
+}
+
+function parseDataSource(raw?: string): 'virtual' | 'live' | undefined {
+  const value = raw?.trim().toLowerCase();
+  if (value === 'virtual' || value === 'demo') return 'virtual';
+  if (value === 'live' || value === 'real') return 'live';
+  return undefined;
+}
+
+function parseProbe(raw?: string): boolean {
+  return raw === '1' || raw === 'true';
 }
 
 function resolveDefaultRange(startDay?: string, endDay?: string): {

@@ -11,7 +11,9 @@ import {
   todayYmdLocal,
   useAnalyticsRange,
 } from '../components/AnalyticsFilters';
+import { DataModeBar, useAnalyticsDataMode } from '../components/DataModeBar';
 import { formatProductLabel } from '../constants/product-names';
+import type { DataModeChoice } from '../data-mode/preference';
 
 type DevicesUsage = {
   startDay: string;
@@ -40,9 +42,12 @@ type DevicesUsage = {
     totalDevices: number;
     onlineRate: number;
   }>;
+  virtual?: boolean;
+  quotaExhausted?: boolean;
 };
 
 export function DevicesAnalyticsPage() {
+  const dataMode = useAnalyticsDataMode();
   const { applyPresetDays } = useAnalyticsRange();
   const [preset, setPreset] = useState<DayPreset>('30');
   const [startDay, setStartDay] = useState(() => daysAgoYmd(29));
@@ -52,17 +57,27 @@ export function DevicesAnalyticsPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function load(opts?: { startDay?: string; endDay?: string; productId?: string }) {
+  async function load(opts?: {
+    startDay?: string;
+    endDay?: string;
+    productId?: string;
+    dataSource?: DataModeChoice;
+    probe?: boolean;
+  }) {
     setLoading(true);
     setError(null);
+    const source = opts?.dataSource ?? dataMode.pref.mode;
     try {
       const res = await api<DevicesUsage>(
         `/api/analytics/devices-usage${qs({
           startDay: opts?.startDay ?? startDay,
           endDay: opts?.endDay ?? endDay,
           productId: (opts?.productId ?? productId) || undefined,
+          dataSource: source,
+          probe: opts?.probe ? '1' : undefined,
         })}`,
       );
+      dataMode.accept(res);
       setData(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -107,6 +122,17 @@ export function DevicesAnalyticsPage() {
           {loading ? '加载中…' : '刷新'}
         </button>
       </div>
+
+      <DataModeBar
+        mode={dataMode.pref.mode}
+        manual={dataMode.pref.manual}
+        quotaExhausted={dataMode.pref.quotaExhausted || Boolean(data?.quotaExhausted)}
+        showingVirtual={Boolean(data?.virtual) || dataMode.pref.mode === 'virtual'}
+        onSelect={(mode) => {
+          dataMode.select(mode);
+          void load({ dataSource: mode, probe: mode === 'live' });
+        }}
+      />
 
       <AnalyticsFilters
         preset={preset}

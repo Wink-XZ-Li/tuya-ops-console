@@ -1,7 +1,9 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { api, qs } from '../api/client';
+import { DataModeBar, useAnalyticsDataMode } from '../components/DataModeBar';
 import { TrendChart } from '../components/TrendChart';
 import { formatProductLabel, PRODUCT_IDS } from '../constants/product-names';
+import type { DataModeChoice } from '../data-mode/preference';
 
 type SeriesPoint = { dt: string; value: number; label?: string };
 
@@ -44,6 +46,9 @@ type DashboardResponse = {
     items: Array<{ name: string; value: number; percentage: string }>;
   };
   warnings: string[];
+  virtual?: boolean;
+  quotaExhausted?: boolean;
+  dataMode?: 'live' | 'virtual';
 };
 
 type Preset = '7' | '30' | 'custom';
@@ -80,6 +85,7 @@ function formatNumber(n: number): string {
 }
 
 export function DashboardPage() {
+  const dataMode = useAnalyticsDataMode();
   const [preset, setPreset] = useState<Preset>('30');
   const [startDay, setStartDay] = useState(() => daysAgoYmd(29));
   const [endDay, setEndDay] = useState(() => todayYmdLocal());
@@ -93,9 +99,12 @@ export function DashboardPage() {
     endDay?: string;
     productId?: string;
     refresh?: boolean;
+    dataSource?: DataModeChoice;
+    probe?: boolean;
   }) {
     setLoading(true);
     setError(null);
+    const source = opts?.dataSource ?? dataMode.pref.mode;
     try {
       const res = await api<DashboardResponse>(
         `/api/analytics/dashboard${qs({
@@ -103,8 +112,11 @@ export function DashboardPage() {
           endDay: opts?.endDay ?? endDay,
           productId: (opts?.productId ?? productId) || undefined,
           refresh: opts?.refresh ? '1' : undefined,
+          dataSource: source,
+          probe: opts?.probe ? '1' : undefined,
         })}`,
       );
+      dataMode.accept(res);
       setData(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -177,6 +189,17 @@ export function DashboardPage() {
         </button>
       </div>
 
+      <DataModeBar
+        mode={dataMode.pref.mode}
+        manual={dataMode.pref.manual}
+        quotaExhausted={dataMode.pref.quotaExhausted || Boolean(data?.quotaExhausted)}
+        showingVirtual={Boolean(data?.virtual) || dataMode.pref.mode === 'virtual'}
+        onSelect={(mode) => {
+          dataMode.select(mode);
+          void load({ dataSource: mode, probe: mode === 'live', refresh: mode === 'live' });
+        }}
+      />
+
       <form className="filters" onSubmit={onFilter}>
         <div className="field">
           <label>区间</label>
@@ -244,7 +267,7 @@ export function DashboardPage() {
       {data && (
         <p className="hint">
           {data.note}
-          {data.fromCache ? ' · 缓存' : ' · 实时'} · 更新于{' '}
+          {data.virtual ? ' · 虚拟数据' : data.fromCache ? ' · 缓存' : ' · 实时'} · 更新于{' '}
           {new Date(data.cachedAt).toLocaleString()}
         </p>
       )}

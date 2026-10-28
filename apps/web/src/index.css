@@ -1211,6 +1211,93 @@ table.data tbody tr.no-click {
   font-size: 0.86rem;
 }
 
+.data-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.data-mode-banner {
+  padding: 14px 16px;
+  border: 1px solid #f0d2b4;
+  border-left: 4px solid #b54708;
+  border-radius: var(--radius);
+  background: #fff7ed;
+  color: #7c2d12;
+}
+
+.data-mode-banner-title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.data-mode-banner strong {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: #9a3412;
+}
+
+.data-mode-banner p {
+  margin: 0.35rem 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.badge.data-mode-badge {
+  background: #9a3412;
+  color: #fff;
+}
+
+.data-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+}
+
+.data-mode-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.data-mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.data-mode-switch button {
+  border: 0;
+  background: transparent;
+  min-height: 32px;
+  padding: 0 0.95rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.data-mode-switch button + button {
+  border-left: 1px solid var(--border-strong);
+}
+
+.data-mode-switch button.on {
+  background: var(--text);
+  color: #fff;
+}
+
+.data-mode-note {
+  margin: 0;
+  flex: 1 1 18rem;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .health-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

@@ -24,6 +24,7 @@ const switchPid = 'qxjzruuqz40bty7e';
 
 describe('FaultsAnalyticsPage fault codes', () => {
   beforeEach(() => {
+    localStorage.clear();
     api.mockReset();
     api.mockResolvedValue({
       startDay: '20261001',

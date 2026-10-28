@@ -21,6 +21,19 @@ import {
 } from '../tuya/tuya.client';
 import { summarizeFaultCodesByProduct } from './fault-code-breakdown';
 import { extractModeLabel } from './rollup.job';
+import {
+  AnalyticsDataMeta,
+  AnalyticsDataSource,
+  isTrialQuotaExhausted,
+  TrialQuotaGate,
+  TUYA_TRIAL_QUOTA_EXHAUSTED_CODE,
+} from './trial-quota';
+import {
+  buildVirtualDashboard,
+  buildVirtualDevicesUsage,
+  buildVirtualFaults,
+  buildVirtualUsers,
+} from './virtual-fleet';
 
 const CACHE_TTL_MS = 8 * 60 * 1000;
 const FLEET_PRODUCT_ID = '';
@@ -30,6 +43,10 @@ export type DashboardQuery = {
   endDay: string;
   productId?: string;
   refresh?: boolean;
+  /** virtual 直接返回演示数据；live 或省略则走涂鸦，额度耗尽时降级。 */
+  dataSource?: AnalyticsDataSource;
+  /** 手动切回真实时绕过冷却，只探测一次。 */
+  probe?: boolean;
 };
 
 export type DashboardResponse = {
@@ -58,12 +75,18 @@ export type DashboardResponse = {
     items: TuyaLocationActivePoint[];
   };
   warnings: string[];
+  dataMode: AnalyticsDataMeta['dataMode'];
+  virtual: boolean;
+  quotaExhausted: boolean;
+  virtualReason: AnalyticsDataMeta['virtualReason'];
 };
 
 export type DayRangeQuery = {
   startDay: string;
   endDay: string;
   productId?: string;
+  dataSource?: AnalyticsDataSource;
+  probe?: boolean;
 };
 
 export type CreateReportInput = {
@@ -82,6 +105,7 @@ type CacheEntry = { expiresAt: number; payload: DashboardResponse };
 export class AnalyticsService {
   private readonly logger = new Logger(AnalyticsService.name);
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly quota = new TrialQuotaGate();
 
   constructor(
     @Inject(TUYA_CLIENT) private readonly tuya: TuyaClient,
@@ -94,6 +118,11 @@ export class AnalyticsService {
     assertDayRange(startDay, endDay);
 
     const productId = query.productId?.trim() || undefined;
+    const range = { startDay, endDay, productId };
+    if (query.dataSource === 'virtual') {
+      return { ...buildVirtualDashboard(range), ...this.requestedVirtualMeta() };
+    }
+
     const cacheKey = `${startDay}:${endDay}:${productId ?? ''}`;
 
     if (!query.refresh) {
@@ -103,51 +132,63 @@ export class AnalyticsService {
       }
     }
 
+    if (this.quota.isExhausted() && !query.probe) {
+      return { ...buildVirtualDashboard(range), ...this.fallbackVirtualMeta() };
+    }
+
     const warnings: string[] = [];
-    const [device, register, control, locations] = await Promise.all([
-      this.tuya.getAppDeviceStat({ startDay, endDay, productId }),
-      this.tuya.getAppUserRegisterStat({ startDay, endDay }),
-      this.tuya.getAppDeviceControl({ startDay, endDay, productId }).catch((err) => {
-        warnings.push(`控制数据不可用：${err instanceof Error ? err.message : String(err)}`);
-        return [] as TuyaControlStatPoint[];
-      }),
-      this.fetchLocations(startDay, endDay, productId, warnings),
-    ]);
+    try {
+      const [device, register, control, locations] = await Promise.all([
+        this.tuya.getAppDeviceStat({ startDay, endDay, productId }),
+        this.tuya.getAppUserRegisterStat({ startDay, endDay }),
+        this.tuya.getAppDeviceControl({ startDay, endDay, productId }).catch((err) => {
+          warnings.push(`控制数据不可用：${err instanceof Error ? err.message : String(err)}`);
+          return [] as TuyaControlStatPoint[];
+        }),
+        this.fetchLocations(startDay, endDay, productId, warnings),
+      ]);
 
-    const lastDevice = device[device.length - 1];
-    const lastRegister = register[register.length - 1];
-    const activationNew = device.reduce((sum, row) => sum + row.activationNum, 0);
-    const registerNew = register.reduce((sum, row) => sum + row.todayRegisterNum, 0);
-    const controlTotal = control.reduce((sum, row) => sum + row.controlNum, 0);
-    const controlUsers = control.reduce((sum, row) => sum + row.controlUserNum, 0);
+      const lastDevice = device[device.length - 1];
+      const lastRegister = register[register.length - 1];
+      const activationNew = device.reduce((sum, row) => sum + row.activationNum, 0);
+      const registerNew = register.reduce((sum, row) => sum + row.todayRegisterNum, 0);
+      const controlTotal = control.reduce((sum, row) => sum + row.controlNum, 0);
+      const controlUsers = control.reduce((sum, row) => sum + row.controlUserNum, 0);
 
-    const payload: DashboardResponse = {
-      startDay,
-      endDay,
-      productId: productId ?? null,
-      cachedAt: new Date().toISOString(),
-      fromCache: false,
-      note: 'App 级数据星象仪指标；与运维台设备白名单无关。按 PID 筛选时，地区分布若无权限会回退到全产品。',
-      kpis: {
-        activationTotal: lastDevice?.activationTotalNum ?? 0,
-        activationNew,
-        activeLatest: lastDevice?.activeNum ?? 0,
-        registerTotal: lastRegister?.totalRegisterNum ?? 0,
-        registerNew,
-        controlTotal,
-        controlUsers,
-      },
-      series: { device, register, control },
-      locations,
-      warnings,
-    };
+      this.quota.markClear();
+      const payload: DashboardResponse = {
+        startDay,
+        endDay,
+        productId: productId ?? null,
+        cachedAt: new Date().toISOString(),
+        fromCache: false,
+        note: 'App 级数据星象仪指标；与运维台设备白名单无关。按 PID 筛选时，地区分布若无权限会回退到全产品。',
+        kpis: {
+          activationTotal: lastDevice?.activationTotalNum ?? 0,
+          activationNew,
+          activeLatest: lastDevice?.activeNum ?? 0,
+          registerTotal: lastRegister?.totalRegisterNum ?? 0,
+          registerNew,
+          controlTotal,
+          controlUsers,
+        },
+        series: { device, register, control },
+        locations,
+        warnings,
+        ...this.liveMeta(),
+      };
 
-    this.cache.set(cacheKey, {
-      expiresAt: Date.now() + CACHE_TTL_MS,
-      payload: { ...payload, fromCache: false },
-    });
+      this.cache.set(cacheKey, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        payload: { ...payload, fromCache: false },
+      });
 
-    return payload;
+      return payload;
+    } catch (err) {
+      if (!isTrialQuotaExhausted(err)) throw err;
+      this.noteQuotaExhausted(err);
+      return { ...buildVirtualDashboard(range), ...this.fallbackVirtualMeta() };
+    }
   }
 
   async getFaultSurvey(productId?: string): Promise<{
@@ -179,6 +220,14 @@ export class AnalyticsService {
     const endDay = normalizeDay(query.endDay);
     assertDayRange(startDay, endDay);
     const productId = query.productId?.trim() || undefined;
+    const range = { startDay, endDay, productId };
+    if (query.dataSource === 'virtual') {
+      return { ...buildVirtualFaults(range), ...this.requestedVirtualMeta() };
+    }
+    if (this.quota.isExhausted() && !query.probe) {
+      return { ...buildVirtualFaults(range), ...this.fallbackVirtualMeta() };
+    }
+
     const rollupProductId = productId ?? FLEET_PRODUCT_ID;
 
     const deviceWhere: Prisma.DeviceWhereInput = productId
@@ -323,7 +372,7 @@ export class AnalyticsService {
       locationMap.set(loc, (locationMap.get(loc) ?? 0) + 1);
     }
 
-    return {
+    const result = {
       startDay,
       endDay,
       productId: productId ?? null,
@@ -360,6 +409,11 @@ export class AnalyticsService {
       liveSurvey: surveyPack.live,
       warnings: surveyPack.warnings,
     };
+    if (result.warnings.some((warning) => isTrialQuotaExhausted(warning))) {
+      this.noteQuotaExhausted(result.warnings.join(' | '));
+      return { ...buildVirtualFaults(range), ...this.fallbackVirtualMeta() };
+    }
+    return { ...result, ...this.liveMeta() };
   }
 
   async getDevicesUsage(query: DayRangeQuery) {
@@ -367,6 +421,20 @@ export class AnalyticsService {
     const endDay = normalizeDay(query.endDay);
     assertDayRange(startDay, endDay);
     const productId = query.productId?.trim() || undefined;
+    const range = { startDay, endDay, productId };
+    if (query.dataSource === 'virtual') {
+      return { ...buildVirtualDevicesUsage(range), ...this.requestedVirtualMeta() };
+    }
+    if (this.quota.isExhausted() && !query.probe) {
+      return { ...buildVirtualDevicesUsage(range), ...this.fallbackVirtualMeta() };
+    }
+    if (!this.quota.isClearFresh()) {
+      const blocked = await this.probeQuota();
+      if (blocked) {
+        return { ...buildVirtualDevicesUsage(range), ...this.fallbackVirtualMeta() };
+      }
+    }
+
     const rollupProductId = productId ?? FLEET_PRODUCT_ID;
 
     const deviceWhere: Prisma.DeviceWhereInput = productId ? { productId } : {};
@@ -482,6 +550,7 @@ export class AnalyticsService {
         faultCount: row.faultCount,
         totalDevices: row.totalDevices,
       })),
+      ...this.liveMeta(),
     };
   }
 
@@ -489,6 +558,17 @@ export class AnalyticsService {
     const startDay = normalizeDay(query.startDay);
     const endDay = normalizeDay(query.endDay);
     assertDayRange(startDay, endDay);
+    const range = {
+      startDay,
+      endDay,
+      productId: query.productId?.trim() || undefined,
+    };
+    if (query.dataSource === 'virtual') {
+      return { ...buildVirtualUsers(range), ...this.requestedVirtualMeta() };
+    }
+    if (this.quota.isExhausted() && !query.probe) {
+      return { ...buildVirtualUsers(range), ...this.fallbackVirtualMeta() };
+    }
 
     const warnings: string[] = [];
     const [register, control, locations, endUsers] = await Promise.all([
@@ -535,6 +615,11 @@ export class AnalyticsService {
     }
 
     const lastRegister = register[register.length - 1];
+    if (warnings.some((warning) => isTrialQuotaExhausted(warning))) {
+      this.noteQuotaExhausted(warnings.join(' | '));
+      return { ...buildVirtualUsers(range), ...this.fallbackVirtualMeta() };
+    }
+    if (warnings.length === 0) this.quota.markClear();
     return {
       startDay,
       endDay,
@@ -568,6 +653,7 @@ export class AnalyticsService {
           .sort((a, b) => b.count - a.count),
       },
       warnings,
+      ...this.liveMeta(),
     };
   }
 
@@ -679,6 +765,57 @@ export class AnalyticsService {
     return report;
   }
 
+  private liveMeta(): AnalyticsDataMeta {
+    return {
+      dataMode: 'live',
+      virtual: false,
+      quotaExhausted: false,
+      virtualReason: null,
+    };
+  }
+
+  private requestedVirtualMeta(): AnalyticsDataMeta {
+    return {
+      dataMode: 'virtual',
+      virtual: true,
+      quotaExhausted: this.quota.isExhausted(),
+      virtualReason: 'requested',
+    };
+  }
+
+  private fallbackVirtualMeta(): AnalyticsDataMeta {
+    return {
+      dataMode: 'virtual',
+      virtual: true,
+      quotaExhausted: true,
+      virtualReason: 'quota-fallback',
+    };
+  }
+
+  private noteQuotaExhausted(err: unknown): void {
+    const firstSight = !this.quota.isExhausted();
+    this.quota.markExhausted();
+    if (!firstSight) return;
+    const text = err instanceof Error ? err.message : String(err);
+    this.logger.warn(
+      `IoT Core trial quota exhausted (${TUYA_TRIAL_QUOTA_EXHAUSTED_CODE}); serving virtual analytics during cooldown. ${text}`,
+    );
+  }
+
+  /** 设备分析不走星象仪。额度未知时探测一次 getAppDeviceStat，耗尽后进入冷却不再打。 */
+  private async probeQuota(): Promise<boolean> {
+    const day = formatProbeDay(new Date());
+    try {
+      await this.tuya.getAppDeviceStat({ startDay: day, endDay: day });
+      this.quota.markClear();
+      return false;
+    } catch (err) {
+      if (!isTrialQuotaExhausted(err)) return false;
+      this.noteQuotaExhausted(err);
+      return true;
+    }
+  }
+
   private async fetchLocations(
     startDay: string,
     endDay: string,
@@ -750,6 +887,13 @@ export function pickLocationDateType(startDay: string, endDay: string): TuyaLoca
   if (days <= 7) return 'week';
   if (days <= 14) return 'weeks';
   return 'month';
+}
+
+function formatProbeDay(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
 }
 
 function ymdToDate(ymd: string): Date {
