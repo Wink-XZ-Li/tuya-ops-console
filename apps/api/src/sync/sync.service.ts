@@ -51,6 +51,7 @@ export class SyncService {
         const ids = mockDevices.map((d) => d.id);
         await this.prisma.deviceBinding.deleteMany({ where: { deviceId: { in: ids } } });
         await this.prisma.deviceEvent.deleteMany({ where: { deviceId: { in: ids } } });
+        await this.deleteArchivedEvents(ids);
         await this.prisma.commandLog.deleteMany({ where: { deviceId: { in: ids } } });
         await this.prisma.alert.deleteMany({ where: { deviceId: { in: ids } } });
         const deleted = await this.prisma.device.deleteMany({ where: { id: { in: ids } } });
@@ -292,6 +293,14 @@ export class SyncService {
     }
   }
 
+  private deleteArchivedEvents(ids: string[]): Promise<unknown> {
+    const archive = (this.prisma as unknown as {
+      deviceEventArchive?: { deleteMany: (args: unknown) => Promise<unknown> };
+    }).deviceEventArchive;
+    if (!archive?.deleteMany || ids.length === 0) return Promise.resolve();
+    return archive.deleteMany({ where: { deviceId: { in: ids } } });
+  }
+
   private async ownersFor(summary: TuyaDeviceSummary): Promise<TuyaUserProfile[]> {
     const profiles = await this.tuya.getDeviceUserProfiles(summary.deviceId);
     if (profiles.length > 0) return profiles;
@@ -314,6 +323,7 @@ export class SyncService {
     const ids = stale.map((device) => device.id);
     await this.prisma.deviceBinding.deleteMany({ where: { deviceId: { in: ids } } });
     await this.prisma.deviceEvent.deleteMany({ where: { deviceId: { in: ids } } });
+    await this.deleteArchivedEvents(ids);
     await this.prisma.commandLog.deleteMany({ where: { deviceId: { in: ids } } });
     await this.prisma.alert.deleteMany({ where: { deviceId: { in: ids } } });
     const deleted = await this.prisma.device.deleteMany({ where: { id: { in: ids } } });

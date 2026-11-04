@@ -90,6 +90,9 @@ model Device {
   @@index([productId])
   @@index([onlineStatus])
   @@index([faultStatus])
+  @@index([createdAt])
+  @@index([productId, createdAt])
+  @@index([faultStatus, productId])
 }
 
 model DeviceBinding {
@@ -116,6 +119,25 @@ model DeviceEvent {
 
   @@index([deviceId, eventTime])
   @@index([bizCode, eventTime])
+  @@index([eventTime])
+  @@index([deviceId, bizCode, eventTime])
+}
+
+/// Cold DeviceEvent rows older than EVENT_HOT_DAYS.
+/// Monthly RANGE partitions live in SQL only: MySQL refuses foreign keys on a
+/// partitioned table, so this model has no Device relation. The primary key
+/// includes eventTime because the partition key must be part of every unique key.
+model DeviceEventArchive {
+  id        String   @default(cuid())
+  deviceId  String
+  bizCode   String
+  payload   Json
+  eventTime DateTime
+  createdAt DateTime @default(now())
+
+  @@id([id, eventTime])
+  @@index([deviceId, eventTime])
+  @@index([deviceId, bizCode, eventTime])
   @@index([eventTime])
 }
 
@@ -172,6 +194,9 @@ model Alert {
   @@index([deviceId, status])
   @@index([deviceId, faultCode, status])
   @@index([category, status])
+  @@index([category, openedAt])
+  @@index([status, closedAt])
+  @@index([openedAt])
 }
 
 /// Product fault-code dictionary. Matched copy is seeded from panel fault meanings.
@@ -256,6 +281,7 @@ model DailyDeviceMetric {
 
   @@unique([day, productId])
   @@index([day])
+  @@index([productId, day])
 }
 
 /// Daily fault / alert rollup by fault code. Not purged by RetentionJob.
@@ -274,6 +300,7 @@ model DailyFaultStat {
   @@unique([day, productId, faultCode])
   @@index([day])
   @@index([faultCode])
+  @@index([productId, day])
 }
 
 enum OpsReportTemplate {

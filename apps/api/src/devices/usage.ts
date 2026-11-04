@@ -50,6 +50,44 @@ function roundMetric(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
+type UsageSlot = { first: UsageSample; last: UsageSample; dip: UsageSample | null };
+
+/**
+ * Long windows keep the first reading, the last reading, and the lowest dip in each
+ * usage bucket. A monotonic meter then diffs the same as the full series; a reset
+ * still shows up as a dip. Short windows do not use this.
+ */
+export function rememberCumulativeSample(
+  slots: Map<number, UsageSlot>,
+  sample: UsageSample,
+  bucketStart: number,
+): void {
+  const slot = slots.get(bucketStart);
+  if (!slot) {
+    slots.set(bucketStart, { first: sample, last: sample, dip: null });
+    return;
+  }
+  if (sample.t <= slot.first.t) slot.first = sample;
+  if (sample.t >= slot.last.t) slot.last = sample;
+  if (sample.value < slot.first.value && (!slot.dip || sample.value < slot.dip.value)) {
+    slot.dip = sample;
+  }
+}
+
+export function flattenUsageSlots(slots: Map<number, UsageSlot>): UsageSample[] {
+  const samples: UsageSample[] = [];
+  for (const start of [...slots.keys()].sort((a, b) => a - b)) {
+    const slot = slots.get(start);
+    if (!slot) continue;
+    const list = [slot.first];
+    if (slot.dip && slot.dip.t !== slot.first.t && slot.dip.t !== slot.last.t) list.push(slot.dip);
+    if (slot.last.t !== slot.first.t) list.push(slot.last);
+    list.sort((a, b) => a.t - b.t);
+    samples.push(...list);
+  }
+  return samples;
+}
+
 export function buildUsage(input: {
   samples: UsageSample[];
   from: Date;
