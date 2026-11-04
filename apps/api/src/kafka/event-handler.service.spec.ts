@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { EventHandlerService } from './event-handler.service';
 
 describe('EventHandlerService', () => {
@@ -39,25 +40,93 @@ describe('EventHandlerService', () => {
     expect(prisma.device.upsert).not.toHaveBeenCalled();
   });
 
-  it('skips upsert for new device when global count >= MAX_DEVICES', async () => {
+  it('upserts the 51st device when DEVICE_SOFT_CAP is 3000', async () => {
+    const prev = process.env.DEVICE_SOFT_CAP;
+    process.env.DEVICE_SOFT_CAP = '3000';
     const prisma = {
       device: {
         findUnique: jest.fn().mockResolvedValue(null),
         count: jest.fn().mockResolvedValue(50),
-        upsert: jest.fn(),
+        upsert: jest.fn().mockResolvedValue({ id: 'row-51' }),
+        update: jest.fn(),
       },
       deviceEvent: { create: jest.fn() },
+      alert: { updateMany: jest.fn() },
+    } as any;
+    const handler = new EventHandlerService(prisma);
+    try {
+      await handler.handle({
+        bizCode: 'deviceOnline',
+        ts: Date.now(),
+        deviceId: 'd-51',
+        productId: 'uhmj5b0ba31zpme6',
+        payload: {},
+      });
+      expect(prisma.device.upsert).toHaveBeenCalled();
+      expect(prisma.deviceEvent.create).toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.DEVICE_SOFT_CAP;
+      else process.env.DEVICE_SOFT_CAP = prev;
+    }
+  });
+
+  it('still accepts a new device at the soft cap and logs device_soft_cap', async () => {
+    const prev = process.env.DEVICE_SOFT_CAP;
+    process.env.DEVICE_SOFT_CAP = '50';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(50),
+        upsert: jest.fn().mockResolvedValue({ id: 'row-over' }),
+        update: jest.fn(),
+      },
+      deviceEvent: { create: jest.fn() },
+      alert: { updateMany: jest.fn() },
+    } as any;
+    const handler = new EventHandlerService(prisma);
+    try {
+      await handler.handle({
+        bizCode: 'deviceOnline',
+        ts: Date.now(),
+        deviceId: 'd-over',
+        productId: 'uhmj5b0ba31zpme6',
+        payload: {},
+      });
+      expect(prisma.device.upsert).toHaveBeenCalled();
+      expect(prisma.deviceEvent.create).toHaveBeenCalled();
+      expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).toContain(
+        'device_soft_cap',
+      );
+      expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).toContain('action=accept');
+    } finally {
+      warn.mockRestore();
+      if (prev === undefined) delete process.env.DEVICE_SOFT_CAP;
+      else process.env.DEVICE_SOFT_CAP = prev;
+    }
+  });
+
+  it('does not consult the soft cap for a device that already exists', async () => {
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'row-1' }),
+        count: jest.fn(),
+        upsert: jest.fn().mockResolvedValue({ id: 'row-1' }),
+        update: jest.fn(),
+      },
+      deviceEvent: { create: jest.fn() },
+      alert: { updateMany: jest.fn() },
     } as any;
     const handler = new EventHandlerService(prisma);
     await handler.handle({
       bizCode: 'deviceOnline',
       ts: Date.now(),
-      deviceId: 'd-new',
+      deviceId: 'd-existing',
       productId: 'uhmj5b0ba31zpme6',
       payload: {},
     });
-    expect(prisma.device.upsert).not.toHaveBeenCalled();
-    expect(prisma.deviceEvent.create).not.toHaveBeenCalled();
+    expect(prisma.device.count).not.toHaveBeenCalled();
+    expect(prisma.device.upsert).toHaveBeenCalled();
   });
 });
 

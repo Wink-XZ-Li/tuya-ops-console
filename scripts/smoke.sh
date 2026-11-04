@@ -112,14 +112,16 @@ info "   admin 登录 OK"
 
 maybe_seed "$ADMIN_TOKEN"
 
-info "2/5 列表设备数 ∈ [1, 9]"
+# Upper bound is the mock seed cap, not a production ingest limit.
+SEED_CAP="${DEMO_SEED_DEVICE_CAP:-50}"
+info "2/5 列表设备数 ∈ [1, ${SEED_CAP}]（DEMO_SEED_DEVICE_CAP，不是生产入库硬顶）"
 read -r code tmp <<<"$(http_get "${API_BASE}/devices?pageSize=20" "$ADMIN_TOKEN")"
 [[ "$code" == "200" ]] || fail "GET /devices 失败 (HTTP ${code})"
 body="$(cat "$tmp")"
 rm -f "$tmp"
 total="$(json_field "$body" total)"
-if [[ "$total" -lt 1 || "$total" -gt 9 ]]; then
-  fail "设备数 ${total} 不在 [1, 9]，Demo 约束不满足"
+if [[ "$total" -lt 1 || "$total" -gt "$SEED_CAP" ]]; then
+  fail "设备数 ${total} 不在 [1, ${SEED_CAP}]。该上限只约束 mock seed"
 fi
 info "   设备数 ${total} OK"
 

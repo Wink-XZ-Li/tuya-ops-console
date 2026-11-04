@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { SyncService } from './sync.service';
 
 describe('SyncService', () => {
@@ -24,16 +25,18 @@ describe('SyncService', () => {
     } as any;
   }
 
-  it('skips new devices when global count would reach MAX_DEVICES', async () => {
+  it('upserts the 51st device when DEVICE_SOFT_CAP is 3000', async () => {
+    const prev = process.env.DEVICE_SOFT_CAP;
+    process.env.DEVICE_SOFT_CAP = '3000';
     const tuya = {
       listDevices: jest.fn().mockResolvedValue({
         list: [
-          { deviceId: 'new-1', productId: 'uhmj5b0ba31zpme6', name: 'New', online: true },
+          { deviceId: 'new-51', productId: 'uhmj5b0ba31zpme6', name: 'New', online: true },
         ],
-        total: 1,
+        total: 51,
       }),
       getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
-      getDevice: jest.fn().mockResolvedValue({ deviceId: 'new-1', productId: 'p', name: '', uid: undefined }),
+      getDevice: jest.fn().mockResolvedValue({ deviceId: 'new-51', productId: 'p', name: '', uid: undefined }),
       getDeviceSignal: jest.fn().mockResolvedValue(null),
       getDeviceStatus: jest.fn().mockResolvedValue([]),
       getUserProfile: jest.fn().mockResolvedValue(null),
@@ -43,14 +46,70 @@ describe('SyncService', () => {
         address: 'mock',
       }),
     };
-    const prisma = basePrisma();
+    const prisma = basePrisma({
+      device: {
+        count: jest.fn().mockResolvedValue(50),
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({ id: 'dev-51', deviceId: 'new-51' }),
+        update: jest.fn(),
+        deleteMany: jest.fn(),
+      },
+    });
     const svc = new SyncService(prisma, tuya as any);
-    await svc.reconcileAll('admin-1');
-    expect(prisma.device.upsert).not.toHaveBeenCalled();
-    expect(prisma.auditLog.create).toHaveBeenCalled();
+    try {
+      const result = await svc.reconcileAll('admin-1');
+      expect(prisma.device.upsert).toHaveBeenCalled();
+      expect(result.devicesSynced).toBe(1);
+      expect(prisma.auditLog.create).toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.DEVICE_SOFT_CAP;
+      else process.env.DEVICE_SOFT_CAP = prev;
+    }
   });
 
-  it('still upserts existing devices at global cap', async () => {
+  it('keeps ingesting when the fleet is already over DEVICE_SOFT_CAP', async () => {
+    const prev = process.env.DEVICE_SOFT_CAP;
+    process.env.DEVICE_SOFT_CAP = '50';
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const tuya = {
+      listDevices: jest.fn().mockResolvedValue({
+        list: [
+          { deviceId: 'new-over', productId: 'uhmj5b0ba31zpme6', name: 'Over', online: true },
+        ],
+        total: 80,
+      }),
+      getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
+      getDevice: jest.fn().mockResolvedValue({ deviceId: 'new-over', productId: 'p', name: '', uid: undefined }),
+      getDeviceSignal: jest.fn().mockResolvedValue(null),
+      getDeviceStatus: jest.fn().mockResolvedValue([]),
+      getUserProfile: jest.fn().mockResolvedValue(null),
+      reverseGeocode: jest.fn(),
+    };
+    const prisma = basePrisma({
+      device: {
+        count: jest.fn().mockResolvedValue(80),
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({ id: 'dev-over', deviceId: 'new-over' }),
+        update: jest.fn(),
+        deleteMany: jest.fn(),
+      },
+    });
+    const svc = new SyncService(prisma, tuya as any);
+    try {
+      const result = await svc.reconcileAll('admin-1');
+      expect(result.devicesSynced).toBe(1);
+      expect(prisma.device.upsert).toHaveBeenCalled();
+      expect(warn.mock.calls.map((call) => String(call[0])).join('\n')).toContain('action=accept');
+    } finally {
+      warn.mockRestore();
+      if (prev === undefined) delete process.env.DEVICE_SOFT_CAP;
+      else process.env.DEVICE_SOFT_CAP = prev;
+    }
+  });
+
+  it('still upserts an existing device when the fleet count is already 50', async () => {
     const existing = { id: 'dev-1', deviceId: 'existing-1' };
     const tuya = {
       listDevices: jest.fn().mockResolvedValue({

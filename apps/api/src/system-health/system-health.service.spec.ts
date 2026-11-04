@@ -7,6 +7,7 @@ describe('SystemHealthService', () => {
   function healthySignals(): ProbeSignals {
     return {
       now,
+      appProfile: 'demo',
       demoMode: 'live',
       mysqlOk: true,
       mysqlLatencyMs: 3,

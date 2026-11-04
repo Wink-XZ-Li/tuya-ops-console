@@ -1,3 +1,4 @@
+import { readAppProfile } from '../config/runtime-profile';
 import type { SystemHealthConfig } from './system-health.types';
 
 function readPositiveInt(raw: string | undefined, fallback: number): number {
@@ -21,6 +22,7 @@ export function readSystemHealthConfig(env: NodeJS.ProcessEnv = process.env): Sy
   let kafkaLagCrit = readPositiveInt(env.SYSTEM_HEALTH_KAFKA_LAG_CRIT, 1000);
   if (kafkaLagCrit < kafkaLagWarn) kafkaLagCrit = kafkaLagWarn;
 
+  const appProfile = readAppProfile(env);
   const demoMode = (env.DEMO_MODE ?? 'mock').trim().toLowerCase() || 'mock';
   const groupId = (env.KAFKA_GROUP_ID ?? 'tuya-ops-demo').trim() || 'tuya-ops-demo';
   const topic = (env.KAFKA_TOPIC_DEVICE_EVENTS ?? 'tuya.device.events').trim() || 'tuya.device.events';
@@ -35,6 +37,7 @@ export function readSystemHealthConfig(env: NodeJS.ProcessEnv = process.env): Sy
     groupId,
     brokers: readBrokers(env.KAFKA_BROKERS),
     topic,
+    appProfile,
     demoMode,
   };
 }

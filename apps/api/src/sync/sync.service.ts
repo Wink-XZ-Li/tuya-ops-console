@@ -7,7 +7,7 @@ import {
   formatLocationText,
   statusFromPairs,
 } from '../devices/device-derived';
-import { MAX_DEVICES } from '../demo/device-limits';
+import { softCapReconcileWarning } from '../config/runtime-profile';
 import { PrismaService } from '../prisma/prisma.service';
 import { TUYA_CLIENT, TuyaClient, TuyaDeviceSummary, TuyaUserProfile } from '../tuya/tuya.client';
 
@@ -26,7 +26,6 @@ export class SyncService {
     const syncedAt = new Date();
     let devicesSynced = 0;
     let bindingsSynced = 0;
-    let stoppedEarly = false;
     let purgedMock = 0;
     let purgedDemoUsers = 0;
 
@@ -62,36 +61,21 @@ export class SyncService {
 
     let lastId: string | undefined;
     const seenDeviceIds = new Set<string>();
+    let notedSoftCap = false;
     for (;;) {
-      if (stoppedEarly) break;
-
       const { list, total, nextLastId } = await this.tuya.listDevices({
         lastId,
         pageSize: PAGE_SIZE,
       });
 
-      const globalCount = await this.prisma.device.count();
-      if (!lastId && total + globalCount > MAX_DEVICES) {
-        this.logger.warn(
-          `Cloud devices (${total}) would exceed global cap (${globalCount}/${MAX_DEVICES}), truncating reconcile`,
-        );
+      if (!notedSoftCap) {
+        notedSoftCap = true;
+        const globalCount = await this.prisma.device.count();
+        const warning = softCapReconcileWarning(globalCount, total);
+        if (warning) this.logger.warn(warning);
       }
 
       for (const summary of list) {
-        const currentCount = await this.prisma.device.count();
-        const existing = await this.prisma.device.findUnique({
-          where: { deviceId: summary.deviceId },
-          select: { id: true },
-        });
-
-        if (!existing && currentCount >= MAX_DEVICES) {
-          this.logger.warn(
-            `Skipping new device ${summary.deviceId}: global count ${currentCount} >= ${MAX_DEVICES}`,
-          );
-          stoppedEarly = true;
-          continue;
-        }
-
         const device = await this.upsertDevice(summary, syncedAt);
         seenDeviceIds.add(summary.deviceId);
         devicesSynced += 1;
@@ -106,10 +90,7 @@ export class SyncService {
       lastId = nextLastId;
     }
 
-    let removedDevices = 0;
-    if (!stoppedEarly) {
-      removedDevices = await this.removeDevicesMissingFromCloud(seenDeviceIds);
-    }
+    const removedDevices = await this.removeDevicesMissingFromCloud(seenDeviceIds);
 
     await this.prisma.auditLog.create({
       data: {

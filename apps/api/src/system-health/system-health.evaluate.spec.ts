@@ -17,6 +17,7 @@ const config = {
 function signals(overrides: Partial<ProbeSignals> = {}): ProbeSignals {
   return {
     now: NOW,
+    appProfile: 'demo',
     demoMode: 'live',
     mysqlOk: true,
     mysqlLatencyMs: 4,
@@ -230,13 +231,32 @@ describe('evaluateSystemHealth', () => {
     expect(report.status).toBe('degraded');
   });
 
-  it('raises API_DEMO_MOCK when the process is not in live mode', () => {
-    const report = evaluateSystemHealth(signals({ demoMode: 'mock' }), config, 5);
+  it('raises API_DEMO_MOCK on the demo profile when the client is not live', () => {
+    const report = evaluateSystemHealth(
+      signals({ appProfile: 'demo', demoMode: 'mock' }),
+      config,
+      5,
+    );
 
     expect(report.status).toBe('critical');
     expect(codes(report)).toEqual(['API_DEMO_MOCK']);
     expect(report.components.find((item) => item.key === 'demo_mode')?.status).toBe('critical');
     expect(report.issues[0]?.steps.join('\n')).toContain('DEMO_MODE');
+  });
+
+  it('does not fail production health when DEMO_MODE is mock', () => {
+    const report = evaluateSystemHealth(
+      signals({ appProfile: 'production', demoMode: 'mock' }),
+      config,
+      5,
+    );
+
+    expect(report.status).toBe('healthy');
+    expect(codes(report)).not.toContain('API_DEMO_MOCK');
+    const demo = report.components.find((item) => item.key === 'demo_mode');
+    expect(demo?.status).toBe('healthy');
+    expect(demo?.summary).toContain('APP_PROFILE=production');
+    expect(demo?.summary).toContain('DEMO_MODE=mock');
   });
 
   it('marks event freshness yellow before the hard stale threshold', () => {
@@ -300,6 +320,19 @@ describe('readSystemHealthConfig', () => {
       groupId: 'tuya-ops-demo',
       topic: 'tuya.device.events',
       brokers: ['127.0.0.1:19092'],
+      appProfile: 'demo',
+      demoMode: 'mock',
+    });
+  });
+
+  it('reads APP_PROFILE without tying it to DEMO_MODE', () => {
+    expect(
+      readSystemHealthConfig({
+        APP_PROFILE: 'production',
+        DEMO_MODE: 'mock',
+      } as NodeJS.ProcessEnv),
+    ).toMatchObject({
+      appProfile: 'production',
       demoMode: 'mock',
     });
   });

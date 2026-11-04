@@ -1,4 +1,5 @@
 import { DeviceOnlineStatus, PrismaClient } from '@prisma/client';
+import { readDemoSeedDeviceCap } from '../src/demo/device-limits';
 import { MOCK_DEVICES } from '../src/tuya/tuya.mock';
 
 const prisma = new PrismaClient();
@@ -66,7 +67,10 @@ async function main() {
   }
 
   const count = await prisma.device.count();
-  if (count >= 10) throw new Error('Demo 设备数必须小于 10');
+  const seedCap = readDemoSeedDeviceCap();
+  if (count > seedCap) {
+    throw new Error(`Demo seed device count ${count} exceeds DEMO_SEED_DEVICE_CAP=${seedCap}`);
+  }
   console.log(`Seeded ${count} mock devices and ${END_USERS.length} end users`);
 }
 
