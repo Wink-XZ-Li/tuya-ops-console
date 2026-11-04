@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { DeviceOnlineStatus, Prisma } from '@prisma/client';
 import { alertDurationMinutes } from '../alerts/alerts.service';
+import { isDemoFixtureUid } from '../demo/demo-fixtures';
 import { PrismaService } from '../prisma/prisma.service';
 import { TUYA_CLIENT, TuyaClient } from '../tuya/tuya.client';
 import { presentLocationText } from './china-admin';
@@ -792,11 +793,11 @@ export class DevicesService {
 
   private async syncOwnerBinding(internalId: string, tuyaDeviceId: string): Promise<void> {
     const profiles = await this.tuya.getDeviceUserProfiles(tuyaDeviceId);
-    let owners = profiles.filter((profile) => profile.tuyaUid && !profile.tuyaUid.startsWith('uid-demo-'));
+    let owners = profiles.filter((profile) => profile.tuyaUid && !isDemoFixtureUid(profile.tuyaUid));
     if (owners.length === 0) {
       try {
         const detail = await this.tuya.getDevice(tuyaDeviceId);
-        if (detail.uid && !detail.uid.startsWith('uid-demo-')) {
+        if (detail.uid && !isDemoFixtureUid(detail.uid)) {
           owners = [{ tuyaUid: detail.uid }];
         }
       } catch (err) {

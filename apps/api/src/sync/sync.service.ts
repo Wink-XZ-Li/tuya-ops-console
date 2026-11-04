@@ -8,10 +8,15 @@ import {
   statusFromPairs,
 } from '../devices/device-derived';
 import { softCapReconcileWarning } from '../config/runtime-profile';
+import {
+  demoFixturePurgeEnabled,
+  isDemoFixtureUid,
+  purgeDemoFixtures,
+  type DemoFixtureDb,
+} from '../demo/demo-fixtures';
 import { PrismaService } from '../prisma/prisma.service';
 import { TUYA_CLIENT, TuyaClient, TuyaDeviceSummary, TuyaUserProfile } from '../tuya/tuya.client';
-
-const PAGE_SIZE = 20;
+import { readSyncPageIntervalMs, readSyncPageSize, readSyncUserPageSize, waitMs } from './sync-pacing';
 
 @Injectable()
 export class SyncService {
@@ -23,51 +28,38 @@ export class SyncService {
   ) {}
 
   async reconcileAll(adminUserId: string) {
+    const started = Date.now();
     const syncedAt = new Date();
+    const pageSize = readSyncPageSize();
+    const intervalMs = readSyncPageIntervalMs();
     let devicesSynced = 0;
     let bindingsSynced = 0;
     let purgedMock = 0;
     let purgedDemoUsers = 0;
 
-    const demoUsers = await this.prisma.endUser.findMany({
-      where: { tuyaUid: { startsWith: 'uid-demo-' } },
-      select: { id: true },
-    });
-    if (demoUsers.length > 0) {
-      const ids = demoUsers.map((u) => u.id);
-      await this.prisma.deviceBinding.deleteMany({ where: { endUserId: { in: ids } } });
-      purgedDemoUsers = (
-        await this.prisma.endUser.deleteMany({ where: { id: { in: ids } } })
-      ).count;
-      this.logger.warn(`Purged ${purgedDemoUsers} uid-demo-* end users`);
-    }
-
-    if (process.env.DEMO_MODE === 'live') {
-      const mockDevices = await this.prisma.device.findMany({
-        where: { deviceId: { startsWith: 'demo-' } },
-        select: { id: true },
-      });
-      if (mockDevices.length > 0) {
-        const ids = mockDevices.map((d) => d.id);
-        await this.prisma.deviceBinding.deleteMany({ where: { deviceId: { in: ids } } });
-        await this.prisma.deviceEvent.deleteMany({ where: { deviceId: { in: ids } } });
-        await this.deleteArchivedEvents(ids);
-        await this.prisma.commandLog.deleteMany({ where: { deviceId: { in: ids } } });
-        await this.prisma.alert.deleteMany({ where: { deviceId: { in: ids } } });
-        const deleted = await this.prisma.device.deleteMany({ where: { id: { in: ids } } });
-        purgedMock = deleted.count;
-        this.logger.warn(`Purged ${purgedMock} mock demo-* devices before live reconcile`);
+    if (demoFixturePurgeEnabled()) {
+      const purged = await purgeDemoFixtures(this.prisma as unknown as DemoFixtureDb);
+      purgedMock = purged.purgedMock;
+      purgedDemoUsers = purged.purgedDemoUsers;
+      if (purgedMock > 0 || purgedDemoUsers > 0) {
+        this.logger.warn(
+          `DEMO_FIXTURE_PURGE one-time migration removed users=${purgedDemoUsers} devices=${purgedMock}`,
+        );
       }
     }
 
     let lastId: string | undefined;
     const seenDeviceIds = new Set<string>();
     let notedSoftCap = false;
+    let pages = 0;
+    let cloudTotal = 0;
     for (;;) {
       const { list, total, nextLastId } = await this.tuya.listDevices({
         lastId,
-        pageSize: PAGE_SIZE,
+        pageSize,
       });
+      pages += 1;
+      cloudTotal = total;
 
       if (!notedSoftCap) {
         notedSoftCap = true;
@@ -85,24 +77,56 @@ export class SyncService {
         bindingsSynced += await this.replaceBindings(device.id, users, syncedAt);
       }
 
-      if (list.length === 0 || list.length < PAGE_SIZE || !nextLastId || nextLastId === lastId) {
+      await this.auditProgress(adminUserId, 'sync.reconcile.progress', {
+        page: pages,
+        pageSize,
+        devicesSynced,
+        cloudTotal,
+        intervalMs,
+      });
+
+      if (list.length === 0 || list.length < pageSize || !nextLastId || nextLastId === lastId) {
         break;
       }
+      await waitMs(intervalMs);
       lastId = nextLastId;
     }
 
     const removedDevices = await this.removeDevicesMissingFromCloud(seenDeviceIds);
+    const durationMs = Date.now() - started;
 
     await this.prisma.auditLog.create({
       data: {
         adminUserId,
         action: 'sync.reconcile',
         resource: 'sync',
-        detail: { devicesSynced, bindingsSynced, purgedMock, purgedDemoUsers, removedDevices } as Prisma.InputJsonValue,
+        detail: {
+          devicesSynced,
+          bindingsSynced,
+          purgedMock,
+          purgedDemoUsers,
+          removedDevices,
+          pages,
+          pageSize,
+          intervalMs,
+          durationMs,
+          cloudTotal,
+          demoFixturePurge: demoFixturePurgeEnabled(),
+        } as Prisma.InputJsonValue,
       },
     });
 
-    return { devicesSynced, bindingsSynced, purgedMock, purgedDemoUsers, removedDevices };
+    return {
+      devicesSynced,
+      bindingsSynced,
+      purgedMock,
+      purgedDemoUsers,
+      removedDevices,
+      pages,
+      pageSize,
+      intervalMs,
+      durationMs,
+    };
   }
 
   /**
@@ -117,7 +141,10 @@ export class SyncService {
       );
     }
 
+    const started = Date.now();
     const syncedAt = new Date();
+    const pageSize = readSyncUserPageSize();
+    const intervalMs = readSyncPageIntervalMs();
     let usersSynced = 0;
     let pages = 0;
     let pageNo = 1;
@@ -127,13 +154,13 @@ export class SyncService {
       const page = await this.tuya.listAppUsers({
         schema,
         pageNo,
-        pageSize: 100,
+        pageSize,
       });
       pages += 1;
       if (typeof page.total === 'number') reportedTotal = page.total;
 
       for (const profile of page.list) {
-        if (!profile.tuyaUid || profile.tuyaUid.startsWith('uid-demo-')) continue;
+        if (!profile.tuyaUid || isDemoFixtureUid(profile.tuyaUid)) continue;
         await this.prisma.endUser.upsert({
           where: { tuyaUid: profile.tuyaUid },
           update: {
@@ -169,12 +196,21 @@ export class SyncService {
         usersSynced += 1;
       }
 
+      await this.auditProgress(adminUserId, 'sync.reconcileUsers.progress', {
+        page: pages,
+        pageSize,
+        usersSynced,
+        cloudTotal: reportedTotal ?? null,
+        intervalMs,
+      });
+
       if (!page.hasMore || page.list.length === 0) break;
-      pageNo += 1;
       if (pages >= 500) {
         this.logger.warn('listAppUsers page safety cap (500) reached; stopping');
         break;
       }
+      await waitMs(intervalMs);
+      pageNo += 1;
     }
 
     await this.prisma.auditLog.create({
@@ -182,11 +218,39 @@ export class SyncService {
         adminUserId,
         action: 'sync.reconcileUsers',
         resource: 'end-users',
-        detail: { usersSynced, pages, schema, total: reportedTotal } as Prisma.InputJsonValue,
+        detail: {
+          usersSynced,
+          pages,
+          schema,
+          total: reportedTotal,
+          pageSize,
+          intervalMs,
+          durationMs: Date.now() - started,
+        } as Prisma.InputJsonValue,
       },
     });
 
-    return { usersSynced, pages, total: reportedTotal };
+    return { usersSynced, pages, total: reportedTotal, pageSize, intervalMs };
+  }
+
+  private async auditProgress(
+    adminUserId: string,
+    action: string,
+    detail: Record<string, unknown>,
+  ): Promise<void> {
+    this.logger.log(
+      `${action} ${Object.entries(detail)
+        .map(([key, value]) => `${key}=${String(value)}`)
+        .join(' ')}`,
+    );
+    await this.prisma.auditLog.create({
+      data: {
+        adminUserId,
+        action,
+        resource: 'sync',
+        detail: detail as Prisma.InputJsonValue,
+      },
+    });
   }
 
   async reconcileDevice(adminUserId: string, deviceId: string) {
@@ -355,7 +419,7 @@ export class SyncService {
 
     for (const seed of users) {
       const tuyaUid = seed.tuyaUid;
-      if (!tuyaUid || tuyaUid.startsWith('uid-demo-')) continue;
+      if (!tuyaUid || isDemoFixtureUid(tuyaUid)) continue;
 
       const profile = await this.tuya.getUserProfile(tuyaUid);
       const username = profile?.username || seed.username;

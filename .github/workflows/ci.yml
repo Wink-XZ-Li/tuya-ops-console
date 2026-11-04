@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tuya-ops/api exec prisma generate
+      - run: pnpm --filter @tuya-ops/api test
+      - run: pnpm --filter @tuya-ops/bridge test
+      - run: pnpm --filter @tuya-ops/web test
+      - run: node scripts/check-fault-meanings-source.mjs
+      - run: node scripts/check-demo-isolation.mjs
