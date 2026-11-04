@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AlertStatus, DeviceOnlineStatus, Prisma } from '@prisma/client';
 import { faultAlertActiveKey, offlineAlertActiveKey } from '../alerts/backfill-fault-alerts';
+import { formatDeviceSoftCapWarning } from '../config/runtime-profile';
 import {
   asRecord,
   decodeBitmapLabels,
@@ -9,7 +10,6 @@ import {
   extractStatusUpdates,
 } from '../devices/device-derived';
 import { PRODUCT_FAULT_BITMAP_LABELS } from '../devices/product-fault-schemas';
-import { MAX_DEVICES } from '../demo/device-limits';
 import { PrismaService } from '../prisma/prisma.service';
 import { DeviceBusMessage } from './device-bus-message';
 
@@ -41,12 +41,12 @@ export class EventHandlerService {
     });
     if (!existing) {
       const count = await this.prisma.device.count();
-      if (count >= MAX_DEVICES) {
-        this.logger.warn(
-          `Skipping upsert for new device ${message.deviceId}: global device count ${count} >= ${MAX_DEVICES}`,
-        );
-        return;
-      }
+      const warning = formatDeviceSoftCapWarning(
+        count,
+        process.env,
+        `deviceId=${message.deviceId}`,
+      );
+      if (warning) this.logger.warn(warning);
     }
 
     const eventTime = new Date(message.ts);

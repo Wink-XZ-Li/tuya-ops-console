@@ -220,10 +220,17 @@ export function evaluateSystemHealth(
   }
 
   let demo: HealthComponent;
-  if (signals.demoMode === 'live') {
-    demo = component('demo_mode', 'healthy', 'DEMO_MODE=live');
+  const modeLabel = signals.demoMode || 'mock';
+  if (signals.appProfile === 'production') {
+    demo = component(
+      'demo_mode',
+      'healthy',
+      `APP_PROFILE=production · DEMO_MODE=${modeLabel}`,
+    );
+  } else if (signals.demoMode === 'live') {
+    demo = component('demo_mode', 'healthy', 'APP_PROFILE=demo · DEMO_MODE=live');
   } else {
-    demo = component('demo_mode', 'critical', `DEMO_MODE=${signals.demoMode || 'mock'}`);
+    demo = component('demo_mode', 'critical', `APP_PROFILE=demo · DEMO_MODE=${modeLabel}`);
     issues.push(makeIssue('API_DEMO_MOCK', 'crit', signals, thresholds));
   }
 

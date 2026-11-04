@@ -29,6 +29,7 @@ export class SystemHealthCollector {
     ]);
     return {
       now,
+      appProfile: config.appProfile,
       demoMode: config.demoMode,
       ...mysql,
       ...kafka,

@@ -1,3 +1,5 @@
+import type { AppProfile } from '../config/runtime-profile';
+
 export type HealthLevel = 'healthy' | 'degraded' | 'critical';
 
 export type HealthSeverity = 'warn' | 'crit';
@@ -31,6 +33,7 @@ export type ConsumerSnapshot = {
 
 export type ProbeSignals = {
   now: number;
+  appProfile: AppProfile;
   demoMode: string;
   mysqlOk: boolean;
   mysqlLatencyMs: number | null;
@@ -54,6 +57,7 @@ export type SystemHealthThresholds = {
 export type SystemHealthConfig = SystemHealthThresholds & {
   brokers: string[];
   topic: string;
+  appProfile: AppProfile;
   demoMode: string;
 };
 

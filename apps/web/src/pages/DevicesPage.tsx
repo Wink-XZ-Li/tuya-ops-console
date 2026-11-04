@@ -92,10 +92,7 @@ export function DevicesPage() {
   return (
     <div className="stack">
       <div className="page-header">
-        <h1>
-          设备
-          <span className="hint">设备上限 50</span>
-        </h1>
+        <h1>设备</h1>
         <RoleGate allow={['admin']}>
           <div className="row gap">
             <button type="button" className="btn" onClick={() => void reconcile()}>

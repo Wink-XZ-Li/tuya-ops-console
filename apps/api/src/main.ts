@@ -1,13 +1,20 @@
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { readAppProfile, readDeviceSoftCap } from './config/runtime-profile';
 import { loadRootEnv } from './load-env';
 
 loadRootEnv();
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  logger.log(`DEMO_MODE=${process.env.DEMO_MODE ?? 'mock'} (Tuya client)`);
+  const softCap = readDeviceSoftCap();
+  logger.log(
+    `APP_PROFILE=${readAppProfile()} DEMO_MODE=${process.env.DEMO_MODE ?? 'mock'} (Tuya client only)`,
+  );
+  logger.log(
+    `DEVICE_SOFT_CAP=${softCap == null ? 'none' : softCap} (warn only; ingest is not truncated)`,
+  );
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
   app.useGlobalPipes(

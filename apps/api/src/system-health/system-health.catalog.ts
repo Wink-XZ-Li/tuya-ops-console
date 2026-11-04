@@ -78,10 +78,11 @@ export const SYSTEM_HEALTH_CATALOG: Record<HealthCode, CatalogEntry> = {
   },
   API_DEMO_MOCK: {
     title: '当前为 mock 模式',
-    impact: '没有接真实涂鸦消息队列，看不到线上设备事件',
+    impact: 'Demo 剖面没有接真实涂鸦消息队列。生产剖面不因 DEMO_MODE=mock 判红',
     severity: 'crit',
     steps: [
-      '把 .env 里的 DEMO_MODE 和 VITE_DEMO_MODE 改成 live',
+      '本项只在 APP_PROFILE=demo 时出现。生产健康不绑定 DEMO_MODE',
+      '若要接真实设备，把 .env 里的 DEMO_MODE 和 VITE_DEMO_MODE 改成 live',
       '填写 TUYA_ACCESS_ID 与 TUYA_ACCESS_SECRET',
       '重启 API 与 bridge 后再刷新本页。本页没有重启按钮',
     ],
