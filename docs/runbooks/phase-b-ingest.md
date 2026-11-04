@@ -61,4 +61,38 @@ rpk topic describe tuya.device.events -X brokers=127.0.0.1:19092
 - 在 `TUYA_MQ_PONG_TIMEOUT_MS`（默认 10s）内没有收到任何入站帧（消息、服务端 ping 或 pong），日志出现 `涂鸦 MQ pong 超时，关闭连接并重连`，然后 `terminate`，走原有重连。
 - `TUYA_MQ_STALE_MS`（默认 90s）内完全没有入站帧，日志出现 `stale watchdog`，同样关闭并重连。
 
-点验：人为丢弃 bridge 的 pong（或拔掉半开连接），日志应出现上述超时，并在有设备消息时重新打出 `Forwarded`。
+点验：人为丢弃 bridge 的 pong（或拔掉半开连接），日志应出现上述超时，并在有设备消息时重新打出 `Forwarded`。单测 `apps/bridge/src/tuya-websocket.spec.ts` 覆盖 pong 超时日志和重连。这次没有涂鸦线上凭据，没有再做真实 WSS 的 Forwarded 恢复。
+
+## 5. 入库压测（§5.B#1）
+
+脚本：`bash scripts/ingest-load.sh`（或 `pnpm ingest:load`）。消息体从 `scripts/fixtures/sample-kafka-event.json` 来，`ts` 改成发送时刻，`deviceId` 按设备散列。默认 **50 条/秒 × 120 秒**。入库延迟是 MySQL `DeviceEvent.createdAt - eventTime`（`eventTime` 就是消息 `ts`）。lag 与 `/api/system-health` 同一套计算，黄线是 `SYSTEM_HEALTH_KAFKA_LAG_WARN`（默认 100）。脚本不创建、不扩 topic 分区。
+
+前置：`docker compose up -d`、迁移和 seed、只起一个 `pnpm dev:api`，等日志出现 `Kafka consumer subscribed`。
+
+短跑：
+
+```bash
+DURATION_SEC=10 RATE=50 bash scripts/ingest-load.sh
+```
+
+正式：
+
+```bash
+DURATION_SEC=120 RATE=50 bash scripts/ingest-load.sh
+```
+
+结果写到 `docs/runbooks/ingest-load-result.json`。退出码 0 表示：全部入库、P95 ≤ 5000ms、结束时 lag ≤ 黄线。
+
+### 2026-11-04 云端 VM 实测（`load-mw1m3lxw`）
+
+`docker compose up -d` 起的 MySQL 8 + Redpanda。topic `tuya.device.events` 为自动创建的 **1** 个分区（没有执行扩分区）。一个 API 进程，消费组 `tuya-ops-demo`。
+
+| 项 | 结果 |
+| --- | --- |
+| 发送 | 6000 条，用时 119901ms，**50.04 条/秒** |
+| 入库 | 6000 / 6000 |
+| 延迟 | min 9ms，P50 13ms，**P95 17ms**，P99 18ms，max 23ms |
+| consumer lag | 发送期间采样峰值 **5**（一批 in-flight），结束后 **0**。黄线 100。约 1 秒内回到 0 |
+| system-health | `kafka_consumer` = healthy，`消费组 Stable，lag 0`，无 `KAFKA_LAG` |
+
+整页 status 是 `critical`，唯一 issue 是 `API_DEMO_MOCK`（`APP_PROFILE=demo` 且 `DEMO_MODE=mock`）。这不是 lag。
