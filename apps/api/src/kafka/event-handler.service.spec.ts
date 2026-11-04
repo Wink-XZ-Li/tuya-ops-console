@@ -128,6 +128,100 @@ describe('EventHandlerService', () => {
     expect(prisma.device.count).not.toHaveBeenCalled();
     expect(prisma.device.upsert).toHaveBeenCalled();
   });
+
+  it('calibrates device.count once for two new devices inside the window', async () => {
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(10),
+        upsert: jest.fn().mockImplementation(async ({ create }: { create: { deviceId: string } }) => ({
+          id: `row-${create.deviceId}`,
+        })),
+        update: jest.fn(),
+      },
+      deviceEvent: { create: jest.fn(), createMany: jest.fn() },
+      alert: { updateMany: jest.fn() },
+    } as any;
+    const handler = new EventHandlerService(prisma);
+    const message = (deviceId: string) => ({
+      bizCode: 'deviceOnline',
+      ts: Date.now(),
+      deviceId,
+      productId: 'uhmj5b0ba31zpme6',
+      payload: {},
+    });
+    await handler.handle(message('d-a'));
+    await handler.handle(message('d-b'));
+    expect(prisma.device.count).toHaveBeenCalledTimes(1);
+    expect(prisma.device.upsert).toHaveBeenCalledTimes(2);
+    expect(prisma.deviceEvent.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not look up a known device again', async () => {
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'row-1', productId: 'uhmj5b0ba31zpme6' }),
+        count: jest.fn(),
+        upsert: jest.fn().mockResolvedValue({ id: 'row-1' }),
+        update: jest.fn(),
+      },
+      deviceEvent: { create: jest.fn() },
+      alert: { updateMany: jest.fn() },
+    } as any;
+    const handler = new EventHandlerService(prisma);
+    const message = {
+      bizCode: 'deviceOnline',
+      ts: Date.now(),
+      deviceId: 'd-existing',
+      productId: 'uhmj5b0ba31zpme6',
+      payload: {},
+    };
+    await handler.handle(message);
+    await handler.handle(message);
+    expect(prisma.device.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.device.count).not.toHaveBeenCalled();
+  });
+
+  it('batch-inserts events and still applies side effects in order', async () => {
+    const updates: string[] = [];
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        count: jest.fn().mockResolvedValue(1),
+        upsert: jest.fn().mockImplementation(async ({ create }: { create: { deviceId: string } }) => ({
+          id: `row-${create.deviceId}`,
+        })),
+        update: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) => {
+          updates.push(where.id);
+        }),
+      },
+      deviceEvent: { create: jest.fn(), createMany: jest.fn() },
+      alert: { updateMany: jest.fn() },
+    } as any;
+    const handler = new EventHandlerService(prisma);
+    await handler.handleMany([
+      {
+        bizCode: 'deviceOnline',
+        ts: 1,
+        deviceId: 'd1',
+        productId: 'p',
+        payload: {},
+      },
+      {
+        bizCode: 'deviceOffline',
+        ts: 2,
+        deviceId: 'd2',
+        productId: 'p',
+        payload: {},
+      },
+    ]);
+    expect(prisma.deviceEvent.create).not.toHaveBeenCalled();
+    expect(prisma.deviceEvent.createMany).toHaveBeenCalledTimes(1);
+    const data = prisma.deviceEvent.createMany.mock.calls[0][0].data;
+    expect(data.map((row: { deviceId: string }) => row.deviceId)).toEqual(['row-d1', 'row-d2']);
+    expect(updates).toEqual(['row-d1', 'row-d2']);
+    expect(prisma.device.count).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('EventHandlerService fault alerts', () => {

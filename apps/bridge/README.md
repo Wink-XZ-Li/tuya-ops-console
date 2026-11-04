@@ -18,3 +18,7 @@
 8. `pnpm dev:web`
 
 有 `deviceId` 的消息都会转发到 Kafka，不再按产品白名单丢弃。
+
+## Keepalive
+
+半开连接会停在 `OPEN` 且不再产出消息。bridge 会定时 ping；pong 超时或长时间没有任何入站帧时关闭套接字并重连。日志关键字：`pong 超时`、`stale watchdog`、随后的 `Reconnecting Tuya MQ`。间隔见根目录 `.env.example` 的 `TUYA_MQ_*`。细节在 `docs/runbooks/phase-b-ingest.md`。

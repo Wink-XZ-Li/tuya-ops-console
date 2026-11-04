@@ -7,6 +7,7 @@ import { DevicesModule } from './devices/devices.module';
 import { DpAliasesModule } from './dp-aliases/dp-aliases.module';
 import { EndUsersModule } from './end-users/end-users.module';
 import { FaultCodesModule } from './fault-codes/fault-codes.module';
+import { JobsModule } from './jobs/jobs.module';
 import { KafkaModule } from './kafka/kafka.module';
 import { SyncModule } from './sync/sync.module';
 import { SystemHealthModule } from './system-health/system-health.module';
@@ -20,6 +21,7 @@ import { TuyaModule } from './tuya/tuya.module';
     DevicesModule,
     EndUsersModule,
     KafkaModule,
+    JobsModule,
     SyncModule,
     CommandsModule,
     DpAliasesModule,

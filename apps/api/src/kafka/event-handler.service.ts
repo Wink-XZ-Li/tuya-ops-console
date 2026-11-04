@@ -23,24 +23,64 @@ const PROPERTY_CODES = new Set([
 const BIND_CODES = new Set(['bindUser', 'deviceBindUser']);
 const UNBIND_CODES = new Set(['unbindUser', 'deviceUnbindUser']);
 
+/** Recalibrate the approximate fleet size on this cadence. Not a second scheduler. */
+const DEFAULT_COUNT_CALIBRATE_MS = 60_000;
+
+type KnownDevice = { id: string; productId: string };
+
+type PreparedEvent = {
+  message: DeviceBusMessage;
+  deviceId: string;
+  eventTime: Date;
+  event: {
+    deviceId: string;
+    bizCode: string;
+    payload: Prisma.InputJsonValue;
+    eventTime: Date;
+  };
+};
+
 @Injectable()
 export class EventHandlerService {
   private readonly logger = new Logger(EventHandlerService.name);
+  private readonly knownDevices = new Map<string, KnownDevice>();
+  /** Last calibrated device.count(), plus inserts observed since then. */
+  private approxDeviceCount: number | null = null;
+  private countCalibratedAt = 0;
 
   constructor(private readonly prisma: PrismaService) {}
 
   async handle(message: DeviceBusMessage): Promise<void> {
-    const productId = await this.resolveProductId(message);
-    if (!productId) {
-      return;
-    }
+    await this.handleMany([message]);
+  }
 
-    const existing = await this.prisma.device.findUnique({
-      where: { deviceId: message.deviceId },
-      select: { id: true },
-    });
-    if (!existing) {
-      const count = await this.prisma.device.count();
+  /**
+   * Caller must pass messages in partition order. Device projection and alert
+   * open/close stay sequential. Event rows for 2+ messages use one createMany.
+   */
+  async handleMany(messages: DeviceBusMessage[]): Promise<void> {
+    const ready: PreparedEvent[] = [];
+    for (const message of messages) {
+      const prepared = await this.prepare(message);
+      if (prepared) ready.push(prepared);
+    }
+    if (ready.length === 1) {
+      await this.prisma.deviceEvent.create({ data: ready[0].event });
+    } else if (ready.length > 1) {
+      await this.prisma.deviceEvent.createMany({ data: ready.map((row) => row.event) });
+    }
+    for (const row of ready) {
+      await this.dispatch(row.message, row.deviceId, row.eventTime);
+    }
+  }
+
+  private async prepare(message: DeviceBusMessage): Promise<PreparedEvent | null> {
+    const known = await this.lookup(message.deviceId);
+    const productId = message.productId || known?.productId;
+    if (!productId) return null;
+
+    if (!known) {
+      const count = await this.approximateDeviceCount();
       const warning = formatDeviceSoftCapWarning(
         count,
         process.env,
@@ -60,49 +100,76 @@ export class EventHandlerService {
       },
     });
 
-    await this.prisma.deviceEvent.create({
-      data: {
+    this.knownDevices.set(message.deviceId, { id: device.id, productId });
+    if (!known && this.approxDeviceCount != null) {
+      this.approxDeviceCount += 1;
+    }
+
+    return {
+      message,
+      deviceId: device.id,
+      eventTime,
+      event: {
         deviceId: device.id,
         bizCode: message.bizCode,
         payload: message.payload as Prisma.InputJsonValue,
         eventTime,
       },
-    });
+    };
+  }
 
+  private async lookup(deviceId: string): Promise<KnownDevice | null> {
+    const cached = this.knownDevices.get(deviceId);
+    if (cached) return cached;
+    const row = await this.prisma.device.findUnique({
+      where: { deviceId },
+      select: { id: true, productId: true },
+    });
+    if (!row?.id) return null;
+    const known = { id: row.id, productId: row.productId ?? '' };
+    if (known.productId) this.knownDevices.set(deviceId, known);
+    return known;
+  }
+
+  private async approximateDeviceCount(): Promise<number> {
+    const windowMs = readCountCalibrateMs();
+    const now = Date.now();
+    if (this.approxDeviceCount != null && now - this.countCalibratedAt < windowMs) {
+      return this.approxDeviceCount;
+    }
+    const count = await this.prisma.device.count();
+    this.approxDeviceCount = count;
+    this.countCalibratedAt = now;
+    return count;
+  }
+
+  private async dispatch(
+    message: DeviceBusMessage,
+    deviceId: string,
+    eventTime: Date,
+  ): Promise<void> {
     const bizCode = message.bizCode;
     if (ONLINE_CODES.has(bizCode)) {
-      await this.handleOnline(device.id);
+      await this.handleOnline(deviceId);
       return;
     }
     if (OFFLINE_CODES.has(bizCode)) {
-      await this.handleOffline(device.id);
+      await this.handleOffline(deviceId);
       return;
     }
     if (PROPERTY_CODES.has(bizCode)) {
-      await this.handleProperty(device.id, message.payload);
+      await this.handleProperty(deviceId, message.payload);
       return;
     }
     if (BIND_CODES.has(bizCode)) {
-      await this.handleBindUser(device.id, message.payload, eventTime);
+      await this.handleBindUser(deviceId, message.payload, eventTime);
       return;
     }
     if (UNBIND_CODES.has(bizCode)) {
-      await this.handleUnbindUser(device.id, message.payload);
+      await this.handleUnbindUser(deviceId, message.payload);
       return;
     }
-
     this.logger.debug(`Recorded unknown bizCode ${bizCode} for ${message.deviceId}`);
-  }
-
-  private async resolveProductId(message: DeviceBusMessage): Promise<string | undefined> {
-    if (message.productId) {
-      return message.productId;
-    }
-    const existing = await this.prisma.device.findUnique({
-      where: { deviceId: message.deviceId },
-      select: { productId: true },
-    });
-    return existing?.productId;
   }
 
   private async handleOnline(deviceId: string): Promise<void> {
@@ -324,4 +391,12 @@ export class EventHandlerService {
 
 function isUniqueConflict(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
+
+function readCountCalibrateMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.DEVICE_COUNT_CALIBRATE_MS;
+  if (raw == null || raw.trim() === '') return DEFAULT_COUNT_CALIBRATE_MS;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) return DEFAULT_COUNT_CALIBRATE_MS;
+  return value;
 }

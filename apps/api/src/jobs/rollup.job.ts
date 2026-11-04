@@ -4,8 +4,10 @@ import {
   DeviceOnlineStatus,
   Prisma,
 } from '@prisma/client';
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { jobsEnabled } from './jobs-enabled';
 
 const ROLLUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const FLEET_PRODUCT_ID = '';
@@ -13,28 +15,27 @@ const FLEET_PRODUCT_ID = '';
 type ModeCounts = Record<string, number>;
 
 @Injectable()
-export class RollupJob implements OnModuleInit, OnModuleDestroy {
+export class RollupJob implements OnModuleInit {
   private readonly logger = new Logger(RollupJob.name);
-  private timer?: NodeJS.Timeout;
 
   constructor(private readonly prisma: PrismaService) {}
 
   onModuleInit(): void {
+    if (!jobsEnabled()) return;
     if (process.env.ANALYTICS_ROLLUP_ON_START === 'true') {
       void this.run().catch((err) =>
         this.logger.error('Rollup job failed on start', err instanceof Error ? err.stack : err),
       );
     }
-    this.timer = setInterval(() => {
-      void this.run().catch((err) =>
-        this.logger.error('Rollup job failed', err instanceof Error ? err.stack : err),
-      );
-    }, ROLLUP_INTERVAL_MS);
   }
 
-  onModuleDestroy(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
+  @Interval('rollup', ROLLUP_INTERVAL_MS)
+  async tick(): Promise<void> {
+    if (!jobsEnabled()) return;
+    try {
+      await this.run();
+    } catch (err) {
+      this.logger.error('Rollup job failed', err instanceof Error ? err.stack : err);
     }
   }
 

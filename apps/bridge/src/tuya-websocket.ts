@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { BridgeKeepalive, readKeepaliveConfig, ScheduleFn, TimerHandle } from './bridge-keepalive';
 import { buildTuyaPulsarPassword, decryptTuyaPayload } from './decrypt';
 import { DeviceBusMessage } from './device-bus-message';
 import { normalizeTuyaMessage } from './normalize';
@@ -10,6 +11,30 @@ export type WebsocketBridgeConfig = {
   env: 'prod' | 'test';
   /** China default; override with TUYA_MQ_WS_URL */
   wsBaseUrl?: string;
+};
+
+export type BridgeSocket = {
+  readyState: number;
+  send: (data: string) => void;
+  ping: (data?: unknown) => void;
+  pong: (data?: unknown) => void;
+  close: () => void;
+  terminate: () => void;
+  on: (event: string, listener: (...args: any[]) => void) => void;
+  removeAllListeners: () => void;
+};
+
+export type WebsocketBridgeOptions = {
+  maxRetryTimes?: number;
+  retryTimeoutMs?: number;
+  pingIntervalMs?: number;
+  pongTimeoutMs?: number;
+  staleAfterMs?: number;
+  schedule?: ScheduleFn;
+  createSocket?: (
+    url: string,
+    options: { headers: { username: string; password: string } },
+  ) => BridgeSocket;
 };
 
 export type BridgeMessageHandler = (message: DeviceBusMessage) => Promise<void>;
@@ -48,22 +73,24 @@ type WsEnvelope = {
  * Stock `pulsar-client` cannot do Tuya auth1; this is the supported consumer.
  */
 export class TuyaWebsocketConsumer {
-  private ws: WebSocket | null = null;
+  private ws: BridgeSocket | null = null;
   private stopped = false;
-  private keepAliveTimer: ReturnType<typeof setTimeout> | null = null;
+  private socketKilled = false;
+  private keepalive: BridgeKeepalive | null = null;
+  private reconnectTimer: TimerHandle | null = null;
   private retryTimes = 0;
   private readonly maxRetryTimes: number;
   private readonly retryTimeoutMs: number;
-  private readonly idleTimeoutMs: number;
+  private readonly options: WebsocketBridgeOptions;
   private onMessage: BridgeMessageHandler | null = null;
 
   constructor(
     private readonly config: WebsocketBridgeConfig,
-    opts?: { maxRetryTimes?: number; retryTimeoutMs?: number; idleTimeoutMs?: number },
+    opts?: WebsocketBridgeOptions,
   ) {
+    this.options = opts ?? {};
     this.maxRetryTimes = opts?.maxRetryTimes ?? 100;
     this.retryTimeoutMs = opts?.retryTimeoutMs ?? 1000;
-    this.idleTimeoutMs = opts?.idleTimeoutMs ?? 30_000;
   }
 
   async start(onMessage: BridgeMessageHandler): Promise<void> {
@@ -76,7 +103,10 @@ export class TuyaWebsocketConsumer {
 
   async stop(): Promise<void> {
     this.stopped = true;
-    this.clearKeepAlive();
+    this.reconnectTimer?.cancel();
+    this.reconnectTimer = null;
+    this.keepalive?.stop();
+    this.keepalive = null;
     if (this.ws) {
       this.ws.removeAllListeners();
       this.ws.close();
@@ -98,39 +128,40 @@ export class TuyaWebsocketConsumer {
       `Connecting Tuya MQ WebSocket env=${this.config.env} url=${url.replace(this.config.accessId, '***')}`,
     );
 
-    const ws = new WebSocket(url, {
-      headers: {
-        username: this.config.accessId,
-        password,
-      },
-    });
+    const headers = { username: this.config.accessId, password };
+    const ws = this.options.createSocket
+      ? this.options.createSocket(url, { headers })
+      : new WebSocket(url, { headers });
     this.ws = ws;
+    this.socketKilled = false;
 
     ws.on('open', () => {
       this.retryTimes = 0;
-      this.armKeepAlive(ws);
+      this.armKeepalive(ws);
       console.log(isInit ? 'Tuya MQ WebSocket open' : 'Tuya MQ WebSocket reconnected');
     });
 
     ws.on('ping', () => {
-      this.armKeepAlive(ws);
+      this.keepalive?.markRx();
       ws.pong(this.config.accessId);
     });
 
     ws.on('pong', () => {
-      this.armKeepAlive(ws);
+      this.keepalive?.markRx();
     });
 
-    ws.on('message', (data) => {
+    ws.on('message', (data: WebSocket.RawData) => {
       void this.handleRawMessage(ws, data);
     });
 
-    ws.on('error', (err) => {
+    ws.on('error', (err: unknown) => {
       console.error('Tuya MQ WebSocket error', err);
     });
 
-    ws.on('close', (code, reason) => {
-      this.clearKeepAlive();
+    ws.on('close', (code: number, reason: { toString(): string }) => {
+      this.socketKilled = false;
+      this.keepalive?.stop();
+      this.keepalive = null;
       console.warn(`Tuya MQ WebSocket closed code=${code} reason=${reason.toString()}`);
       this.scheduleReconnect();
     });
@@ -145,27 +176,50 @@ export class TuyaWebsocketConsumer {
     this.retryTimes += 1;
     const delay = this.retryTimeoutMs * Math.min(this.retryTimes, 10);
     console.log(`Reconnecting Tuya MQ in ${delay}ms (attempt ${this.retryTimes})`);
-    setTimeout(() => this.connect(false), delay);
+    this.reconnectTimer?.cancel();
+    this.reconnectTimer = this.schedule(() => this.connect(false), delay);
   }
 
-  private armKeepAlive(ws: WebSocket): void {
-    this.clearKeepAlive();
-    this.keepAliveTimer = setTimeout(() => {
-      if (ws.readyState === WebSocket.OPEN) {
+  private armKeepalive(ws: BridgeSocket): void {
+    this.keepalive?.stop();
+    const timers = readKeepaliveConfig(process.env, {
+      pingIntervalMs: this.options.pingIntervalMs,
+      pongTimeoutMs: this.options.pongTimeoutMs,
+      staleAfterMs: this.options.staleAfterMs,
+    });
+    this.keepalive = new BridgeKeepalive(timers, {
+      sendPing: () => {
+        if (ws.readyState !== WebSocket.OPEN) return false;
         ws.ping(this.config.accessId);
-      }
-    }, this.idleTimeoutMs);
+        return true;
+      },
+      onDead: () => this.terminateSocket(ws),
+      log: (message) => console.warn(message),
+      schedule: this.options.schedule,
+    });
+    this.keepalive.start();
   }
 
-  private clearKeepAlive(): void {
-    if (this.keepAliveTimer) {
-      clearTimeout(this.keepAliveTimer);
-      this.keepAliveTimer = null;
+  private terminateSocket(ws: BridgeSocket): void {
+    if (this.stopped || this.socketKilled) return;
+    this.socketKilled = true;
+    this.keepalive?.stop();
+    try {
+      ws.terminate();
+    } catch (err) {
+      console.error('Tuya MQ terminate failed', err);
     }
   }
 
-  private async handleRawMessage(ws: WebSocket, data: WebSocket.RawData): Promise<void> {
-    this.armKeepAlive(ws);
+  private schedule(fn: () => void, ms: number): TimerHandle {
+    return (this.options.schedule ?? ((cb, delay) => {
+      const timer = setTimeout(cb, delay);
+      return { cancel: () => clearTimeout(timer) };
+    }))(fn, ms);
+  }
+
+  private async handleRawMessage(ws: BridgeSocket, data: WebSocket.RawData): Promise<void> {
+    this.keepalive?.markRx();
     let envelope: WsEnvelope;
     try {
       envelope = JSON.parse(data.toString()) as WsEnvelope;
