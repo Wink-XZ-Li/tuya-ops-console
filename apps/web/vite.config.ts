@@ -14,11 +14,18 @@ export default defineConfig(({ mode }) => {
     env.DEMO_MODE ??
     env.VITE_DEMO_MODE ??
     'mock';
+  const demoAnalytics =
+    process.env.DEMO_ANALYTICS ??
+    process.env.VITE_DEMO_ANALYTICS ??
+    env.DEMO_ANALYTICS ??
+    env.VITE_DEMO_ANALYTICS ??
+    '';
 
   return {
     envDir: repoRoot,
     define: {
       'import.meta.env.VITE_DEMO_MODE': JSON.stringify(demoMode),
+      'import.meta.env.VITE_DEMO_ANALYTICS': JSON.stringify(demoAnalytics),
     },
     plugins: [react()],
     server: {

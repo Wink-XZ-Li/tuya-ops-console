@@ -23,7 +23,7 @@ export const PRODUCT_FAULT_BITMAP_LABELS: Record<string, Record<string, string[]
       .filter(([, byCode]) => Object.keys(byCode).length > 0),
   );
 
-/** 真实故障文案见 product-fault-meanings.ts（由面板工程收集）。 */
+/** 真实故障文案只读仓库根目录 PRODUCT_FAULT_MEANINGS.json。 */
 export { DEMO_FAULT_COPY, getFaultMeaning, PRODUCT_FAULT_FAMILY, FAULT_FAMILY_MEANINGS } from './product-fault-meanings';
 export type { FaultMeaning, FaultFamilyId } from './product-fault-meanings';
 

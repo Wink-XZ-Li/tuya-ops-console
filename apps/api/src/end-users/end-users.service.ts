@@ -1,5 +1,6 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { DEMO_USER_UID_PREFIX } from '../demo/demo-fixtures';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   TUYA_CLIENT,
@@ -31,7 +32,7 @@ export class EndUsersService {
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 20;
     const where: Prisma.EndUserWhereInput = {
-      NOT: { tuyaUid: { startsWith: 'uid-demo-' } },
+      NOT: { tuyaUid: { startsWith: DEMO_USER_UID_PREFIX } },
     };
 
     if (params.q) {

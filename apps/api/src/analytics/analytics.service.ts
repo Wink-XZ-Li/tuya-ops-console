@@ -19,6 +19,12 @@ import {
   TuyaLocationDateType,
   TuyaRegisterStatPoint,
 } from '../tuya/tuya.client';
+import { readAppProfile } from '../config/runtime-profile';
+import {
+  resolveAnalyticsDataMode,
+  type AnalyticsDataMode,
+} from '../demo/analytics-mode';
+import { isMockTuyaClient, virtualAnalyticsClient } from '../demo/virtual-analytics';
 import { weightedMttrMinutes } from '../jobs/fault-rollup';
 import { summarizeFaultCodesByProduct } from './fault-code-breakdown';
 
@@ -30,6 +36,7 @@ export type DashboardQuery = {
   endDay: string;
   productId?: string;
   refresh?: boolean;
+  dataMode?: 'virtual';
 };
 
 export type DashboardResponse = {
@@ -38,6 +45,7 @@ export type DashboardResponse = {
   productId: string | null;
   cachedAt: string;
   fromCache: boolean;
+  dataMode: AnalyticsDataMode;
   note: string;
   kpis: {
     activationTotal: number;
@@ -64,6 +72,7 @@ export type DayRangeQuery = {
   startDay: string;
   endDay: string;
   productId?: string;
+  dataMode?: 'virtual';
 };
 
 export type CreateReportInput = {
@@ -74,6 +83,7 @@ export type CreateReportInput = {
   sections: string[];
   createdByAdminUserId: string;
   name?: string;
+  dataMode?: 'virtual';
 };
 
 type CacheEntry = { expiresAt: number; payload: DashboardResponse };
@@ -94,7 +104,8 @@ export class AnalyticsService {
     assertDayRange(startDay, endDay);
 
     const productId = query.productId?.trim() || undefined;
-    const cacheKey = `${startDay}:${endDay}:${productId ?? ''}`;
+    const gate = this.analyticsGate(query.dataMode);
+    const cacheKey = `${gate.mode}:${gate.virtualIgnored ? 'ignored' : 'direct'}:${startDay}:${endDay}:${productId ?? ''}`;
 
     if (!query.refresh) {
       const hit = this.cache.get(cacheKey);
@@ -103,15 +114,20 @@ export class AnalyticsService {
       }
     }
 
-    const warnings: string[] = [];
+    if (!gate.client) {
+      return this.refusedLiveDashboard(startDay, endDay, productId, gate.warnings);
+    }
+
+    const warnings = [...gate.warnings];
+    const client = gate.client;
     const [device, register, control, locations] = await Promise.all([
-      this.tuya.getAppDeviceStat({ startDay, endDay, productId }),
-      this.tuya.getAppUserRegisterStat({ startDay, endDay }),
-      this.tuya.getAppDeviceControl({ startDay, endDay, productId }).catch((err) => {
+      client.getAppDeviceStat({ startDay, endDay, productId }),
+      client.getAppUserRegisterStat({ startDay, endDay }),
+      client.getAppDeviceControl({ startDay, endDay, productId }).catch((err) => {
         warnings.push(`控制数据不可用：${err instanceof Error ? err.message : String(err)}`);
         return [] as TuyaControlStatPoint[];
       }),
-      this.fetchLocations(startDay, endDay, productId, warnings),
+      this.fetchLocations(client, startDay, endDay, productId, warnings),
     ]);
 
     const lastDevice = device[device.length - 1];
@@ -127,7 +143,11 @@ export class AnalyticsService {
       productId: productId ?? null,
       cachedAt: new Date().toISOString(),
       fromCache: false,
-      note: 'App 级数据星象仪指标；与运维台设备白名单无关。按 PID 筛选时，地区分布若无权限会回退到全产品。',
+      dataMode: gate.mode,
+      note:
+        gate.mode === 'virtual'
+          ? '显式演示分析（X-Demo-Analytics: virtual 或 DEMO_ANALYTICS=virtual）。不是生产数据，OpenAPI 失败时也不会自动换成这套曲线。'
+          : 'App 级数据星象仪指标；与运维台设备白名单无关。按 PID 筛选时，地区分布若无权限会回退到全产品。',
       kpis: {
         activationTotal: lastDevice?.activationTotalNum ?? 0,
         activationNew,
@@ -150,28 +170,36 @@ export class AnalyticsService {
     return payload;
   }
 
-  async getFaultSurvey(productId?: string): Promise<{
+  async getFaultSurvey(
+    productId?: string,
+    dataMode?: 'virtual',
+  ): Promise<{
     survey: TuyaDevicesDatasSurvey | null;
     live: Awaited<ReturnType<TuyaClient['getDevicesLiveDatasSurvey']>> | null;
     warnings: string[];
+    dataMode: AnalyticsDataMode;
   }> {
-    const warnings: string[] = [];
+    const gate = this.analyticsGate(dataMode);
+    if (!gate.client) {
+      return { survey: null, live: null, warnings: gate.warnings, dataMode: gate.mode };
+    }
+    const warnings = [...gate.warnings];
     const pid = productId?.trim() || undefined;
     const [survey, live] = await Promise.all([
-      this.tuya.getDevicesDatasSurvey({ productId: pid }).catch((err) => {
+      gate.client.getDevicesDatasSurvey({ productId: pid }).catch((err) => {
         warnings.push(
           `datas-survey 不可用：${err instanceof Error ? err.message : String(err)}`,
         );
         return null;
       }),
-      this.tuya.getDevicesLiveDatasSurvey({ productId: pid }).catch((err) => {
+      gate.client.getDevicesLiveDatasSurvey({ productId: pid }).catch((err) => {
         warnings.push(
           `live-datas-survey 不可用：${err instanceof Error ? err.message : String(err)}`,
         );
         return null;
       }),
     ]);
-    return { survey, live, warnings };
+    return { survey, live, warnings, dataMode: gate.mode };
   }
 
   async getFaults(query: DayRangeQuery) {
@@ -217,7 +245,7 @@ export class AnalyticsService {
           where: { ...deviceWhere, faultStatus: DeviceFaultStatus.fault },
           _count: { _all: true },
         }),
-        this.getFaultSurvey(productId),
+        this.getFaultSurvey(productId, query.dataMode),
         this.prisma.device.count({ where: deviceWhere }),
         this.countDistinctFaultDevices({
           productId,
@@ -336,6 +364,7 @@ export class AnalyticsService {
         .sort((a, b) => b.count - a.count),
       survey: surveyPack.survey,
       liveSurvey: surveyPack.live,
+      dataMode: surveyPack.dataMode,
       warnings: surveyPack.warnings,
     };
   }
@@ -458,28 +487,35 @@ export class AnalyticsService {
     const endDay = normalizeDay(query.endDay);
     assertDayRange(startDay, endDay);
 
-    const warnings: string[] = [];
+    const gate = this.analyticsGate(query.dataMode);
+    const warnings = [...gate.warnings];
+    const client = gate.client;
+    const productId = query.productId?.trim() || undefined;
     const [register, control, locations, endUsers] = await Promise.all([
-      this.tuya.getAppUserRegisterStat({ startDay, endDay }).catch((err) => {
-        warnings.push(`注册星象仪不可用：${err instanceof Error ? err.message : String(err)}`);
-        return [] as TuyaRegisterStatPoint[];
-      }),
-      this.tuya
-        .getAppDeviceControl({
-          startDay,
-          endDay,
-          productId: query.productId?.trim() || undefined,
-        })
-        .catch((err) => {
-          warnings.push(`控制星象仪不可用：${err instanceof Error ? err.message : String(err)}`);
-          return [] as TuyaControlStatPoint[];
-        }),
-      this.fetchLocations(
-        startDay,
-        endDay,
-        query.productId?.trim() || undefined,
-        warnings,
-      ),
+      client
+        ? client.getAppUserRegisterStat({ startDay, endDay }).catch((err) => {
+            warnings.push(`注册星象仪不可用：${err instanceof Error ? err.message : String(err)}`);
+            return [] as TuyaRegisterStatPoint[];
+          })
+        : Promise.resolve([] as TuyaRegisterStatPoint[]),
+      client
+        ? client
+            .getAppDeviceControl({
+              startDay,
+              endDay,
+              productId,
+            })
+            .catch((err) => {
+              warnings.push(`控制星象仪不可用：${err instanceof Error ? err.message : String(err)}`);
+              return [] as TuyaControlStatPoint[];
+            })
+        : Promise.resolve([] as TuyaControlStatPoint[]),
+      client
+        ? this.fetchLocations(client, startDay, endDay, productId, warnings)
+        : Promise.resolve({
+            dateType: pickLocationDateType(startDay, endDay),
+            items: [] as TuyaLocationActivePoint[],
+          }),
       this.prisma.endUser.findMany({
         select: {
           id: true,
@@ -507,6 +543,7 @@ export class AnalyticsService {
       startDay,
       endDay,
       productId: query.productId?.trim() || null,
+      dataMode: gate.mode,
       star: {
         register,
         control,
@@ -570,7 +607,7 @@ export class AnalyticsService {
     });
 
     try {
-      const range: DayRangeQuery = { startDay, endDay, productId };
+      const range: DayRangeQuery = { startDay, endDay, productId, dataMode: input.dataMode };
       const result: Record<string, unknown> = {
         startDay,
         endDay,
@@ -677,7 +714,76 @@ export class AnalyticsService {
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
+  private analyticsGate(requested?: 'virtual'): {
+    client: TuyaClient | null;
+    mode: AnalyticsDataMode;
+    virtualIgnored: boolean;
+    warnings: string[];
+  } {
+    const decision = resolveAnalyticsDataMode({
+      profile: readAppProfile(),
+      headerValue: requested,
+      envValue: process.env.DEMO_ANALYTICS,
+    });
+    const warnings: string[] = [];
+    if (decision.virtualIgnored) {
+      warnings.push(
+        'APP_PROFILE=production 已忽略演示分析开关。看板保持 live，OpenAPI 失败不会改用 virtual。',
+      );
+    }
+    if (decision.mode === 'virtual') {
+      return {
+        client: virtualAnalyticsClient(),
+        mode: 'virtual',
+        virtualIgnored: false,
+        warnings,
+      };
+    }
+    if (isMockTuyaClient(this.tuya)) {
+      warnings.push(
+        '当前进程是 TuyaMockClient，live 分析不会用演示曲线顶替。需要演示图表时设置 DEMO_ANALYTICS=virtual，或请求头 X-Demo-Analytics: virtual（仅 APP_PROFILE=demo）。',
+      );
+      return { client: null, mode: 'live', virtualIgnored: decision.virtualIgnored, warnings };
+    }
+    return {
+      client: this.tuya,
+      mode: 'live',
+      virtualIgnored: decision.virtualIgnored,
+      warnings,
+    };
+  }
+
+  private refusedLiveDashboard(
+    startDay: string,
+    endDay: string,
+    productId: string | undefined,
+    warnings: string[],
+  ): DashboardResponse {
+    return {
+      startDay,
+      endDay,
+      productId: productId ?? null,
+      cachedAt: new Date().toISOString(),
+      fromCache: false,
+      dataMode: 'live',
+      note: 'live 分析没有接到 TuyaLiveClient，已返回空序列，没有用演示数据填上。',
+      kpis: {
+        activationTotal: 0,
+        activationNew: 0,
+        activeLatest: 0,
+        registerTotal: 0,
+        registerNew: 0,
+        controlTotal: 0,
+        controlUsers: 0,
+      },
+      series: { device: [], register: [], control: [] },
+      locations: { dateType: pickLocationDateType(startDay, endDay), items: [] },
+      warnings,
+    };
+  }
+
   private async fetchLocations(
+    client: TuyaClient,
     startDay: string,
     endDay: string,
     productId: string | undefined,
@@ -685,7 +791,7 @@ export class AnalyticsService {
   ): Promise<{ dateType: TuyaLocationDateType; items: TuyaLocationActivePoint[] }> {
     const dateType = pickLocationDateType(startDay, endDay);
     try {
-      const items = await this.tuya.getLocationsActiveDatas({
+      const items = await client.getLocationsActiveDatas({
         dateType,
         type: 'province',
         limit: 20,
@@ -699,7 +805,7 @@ export class AnalyticsService {
         );
         warnings.push('按产品筛选地区分布无权限，已回退为全产品地区分布');
         try {
-          const items = await this.tuya.getLocationsActiveDatas({
+          const items = await client.getLocationsActiveDatas({
             dateType,
             type: 'province',
             limit: 20,

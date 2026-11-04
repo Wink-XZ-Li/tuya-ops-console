@@ -23,11 +23,19 @@ async function parseBody(res: Response): Promise<unknown> {
   }
 }
 
+/** Sends the demo analytics header only when the build opted in. Production builds leave it unset. */
+export function applyDemoAnalyticsHeader(headers: Headers, flag: string | undefined): void {
+  if (flag === 'virtual' && !headers.has('X-Demo-Analytics')) {
+    headers.set('X-Demo-Analytics', 'virtual');
+  }
+}
+
 export async function api<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(options.headers);
+  applyDemoAnalyticsHeader(headers, import.meta.env.VITE_DEMO_ANALYTICS);
   if (!headers.has('Content-Type') && options.body) {
     headers.set('Content-Type', 'application/json');
   }

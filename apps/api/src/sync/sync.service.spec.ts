@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import * as syncPacing from './sync-pacing';
 import { SyncService } from './sync.service';
 
 describe('SyncService', () => {
@@ -235,12 +236,182 @@ describe('SyncService', () => {
     );
   });
 
+  it('does not purge demo fixtures unless DEMO_FIXTURE_PURGE is set', async () => {
+    const prev = process.env.DEMO_FIXTURE_PURGE;
+    delete process.env.DEMO_FIXTURE_PURGE;
+    const prisma = basePrisma();
+    const tuya = {
+      listDevices: jest.fn().mockResolvedValue({ list: [], total: 0 }),
+    };
+    try {
+      const result = await new SyncService(prisma, tuya as any).reconcileAll('admin-1');
+      expect(result.purgedDemoUsers).toBe(0);
+      expect(result.purgedMock).toBe(0);
+      expect(prisma.endUser.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.device.deleteMany).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.DEMO_FIXTURE_PURGE;
+      else process.env.DEMO_FIXTURE_PURGE = prev;
+    }
+  });
+
+  it('purges demo fixtures only for the one-time migration flag', async () => {
+    const prevPurge = process.env.DEMO_FIXTURE_PURGE;
+    const prevInterval = process.env.SYNC_PAGE_INTERVAL_MS;
+    process.env.DEMO_FIXTURE_PURGE = '1';
+    process.env.SYNC_PAGE_INTERVAL_MS = '0';
+    const prisma = basePrisma({
+      endUser: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'eu-demo' }]),
+        upsert: jest.fn(),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      device: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest
+          .fn()
+          .mockResolvedValueOnce([{ id: 'dev-demo' }])
+          .mockResolvedValueOnce([]),
+        upsert: jest.fn(),
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    });
+    const tuya = {
+      listDevices: jest.fn().mockResolvedValue({ list: [], total: 0 }),
+    };
+    try {
+      const result = await new SyncService(prisma, tuya as any).reconcileAll('admin-1');
+      expect(result.purgedDemoUsers).toBe(1);
+      expect(result.purgedMock).toBe(1);
+      expect(prisma.deviceEvent.deleteMany).toHaveBeenCalledWith({
+        where: { deviceId: { in: ['dev-demo'] } },
+      });
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'sync.reconcile',
+            detail: expect.objectContaining({ demoFixturePurge: true, pages: 1 }),
+          }),
+        }),
+      );
+    } finally {
+      if (prevPurge === undefined) delete process.env.DEMO_FIXTURE_PURGE;
+      else process.env.DEMO_FIXTURE_PURGE = prevPurge;
+      if (prevInterval === undefined) delete process.env.SYNC_PAGE_INTERVAL_MS;
+      else process.env.SYNC_PAGE_INTERVAL_MS = prevInterval;
+    }
+  });
+
+  it('pages with SYNC_PAGE_SIZE and records progress between pages', async () => {
+    const prevSize = process.env.SYNC_PAGE_SIZE;
+    const prevInterval = process.env.SYNC_PAGE_INTERVAL_MS;
+    process.env.SYNC_PAGE_SIZE = '1';
+    process.env.SYNC_PAGE_INTERVAL_MS = '250';
+    const wait = jest.spyOn(syncPacing, 'waitMs').mockResolvedValue(undefined);
+    const device = (id: string) => ({
+      deviceId: id,
+      productId: 'p',
+      name: id,
+      online: true,
+    });
+    const tuya = {
+      listDevices: jest
+        .fn()
+        .mockResolvedValueOnce({ list: [device('a')], total: 2, nextLastId: 'a' })
+        .mockResolvedValueOnce({ list: [device('b')], total: 2 }),
+      getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
+      getDevice: jest.fn().mockResolvedValue({ uid: undefined }),
+      getDeviceSignal: jest.fn().mockResolvedValue(null),
+      getDeviceStatus: jest.fn().mockResolvedValue([]),
+      getUserProfile: jest.fn().mockResolvedValue(null),
+      reverseGeocode: jest.fn(),
+    };
+    const prisma = basePrisma({
+      device: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+        upsert: jest.fn().mockImplementation(async (args) => ({
+          id: args.where.deviceId,
+          deviceId: args.where.deviceId,
+        })),
+        update: jest.fn(),
+        deleteMany: jest.fn(),
+      },
+    });
+    try {
+      const result = await new SyncService(prisma, tuya as any).reconcileAll('admin-1');
+      expect(result.devicesSynced).toBe(2);
+      expect(result.pages).toBe(2);
+      expect(result.pageSize).toBe(1);
+      expect(tuya.listDevices).toHaveBeenNthCalledWith(1, { lastId: undefined, pageSize: 1 });
+      expect(wait).toHaveBeenCalledWith(250);
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'sync.reconcile.progress',
+            detail: expect.objectContaining({ page: 1, devicesSynced: 1, pageSize: 1 }),
+          }),
+        }),
+      );
+    } finally {
+      wait.mockRestore();
+      if (prevSize === undefined) delete process.env.SYNC_PAGE_SIZE;
+      else process.env.SYNC_PAGE_SIZE = prevSize;
+      if (prevInterval === undefined) delete process.env.SYNC_PAGE_INTERVAL_MS;
+      else process.env.SYNC_PAGE_INTERVAL_MS = prevInterval;
+    }
+  });
+
+  it('still upserts the device when reverseGeocode fails', async () => {
+    const tuya = {
+      listDevices: jest.fn().mockResolvedValue({
+        list: [
+          {
+            deviceId: 'geo-1',
+            productId: 'p',
+            name: 'Geo',
+            online: true,
+            lat: '31.2',
+            lon: '121.5',
+          },
+        ],
+        total: 1,
+      }),
+      getDeviceUserProfiles: jest.fn().mockResolvedValue([]),
+      getDevice: jest.fn().mockResolvedValue({ uid: undefined }),
+      getDeviceSignal: jest.fn().mockResolvedValue(null),
+      getDeviceStatus: jest.fn().mockResolvedValue([]),
+      getUserProfile: jest.fn().mockResolvedValue(null),
+      reverseGeocode: jest.fn().mockRejectedValue(new Error('geo down')),
+    };
+    const prisma = basePrisma({
+      device: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+        upsert: jest.fn().mockResolvedValue({ id: 'geo', deviceId: 'geo-1' }),
+        update: jest.fn(),
+        deleteMany: jest.fn(),
+      },
+    });
+    const result = await new SyncService(prisma, tuya as any).reconcileAll('admin-1');
+    expect(result.devicesSynced).toBe(1);
+    expect(tuya.reverseGeocode).toHaveBeenCalledWith({ latitude: '31.2', longitude: '121.5' });
+    expect(prisma.device.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ lat: '31.2', lon: '121.5' }),
+      }),
+    );
+  });
+
   describe('reconcileUsers', () => {
     const prevSchema = process.env.TUYA_APP_SCHEMA;
+    const prevInterval = process.env.SYNC_PAGE_INTERVAL_MS;
 
     afterEach(() => {
       if (prevSchema === undefined) delete process.env.TUYA_APP_SCHEMA;
       else process.env.TUYA_APP_SCHEMA = prevSchema;
+      if (prevInterval === undefined) delete process.env.SYNC_PAGE_INTERVAL_MS;
+      else process.env.SYNC_PAGE_INTERVAL_MS = prevInterval;
     });
 
     it('throws when TUYA_APP_SCHEMA is missing', async () => {
@@ -254,6 +425,7 @@ describe('SyncService', () => {
 
     it('pages until hasMore=false and upserts users', async () => {
       process.env.TUYA_APP_SCHEMA = 'testApp';
+      process.env.SYNC_PAGE_INTERVAL_MS = '0';
       const tuya = {
         listAppUsers: jest
           .fn()
@@ -280,7 +452,13 @@ describe('SyncService', () => {
       });
       const svc = new SyncService(prisma, tuya as any);
       const result = await svc.reconcileUsers('admin-1');
-      expect(result).toEqual({ usersSynced: 2, pages: 2, total: 3 });
+      expect(result).toEqual({
+        usersSynced: 2,
+        pages: 2,
+        total: 3,
+        pageSize: 100,
+        intervalMs: 0,
+      });
       expect(tuya.listAppUsers).toHaveBeenCalledTimes(2);
       expect(tuya.listAppUsers).toHaveBeenNthCalledWith(1, {
         schema: 'testApp',

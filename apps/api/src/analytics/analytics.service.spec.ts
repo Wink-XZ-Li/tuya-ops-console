@@ -1,3 +1,5 @@
+import { TuyaMockClient } from '../tuya/tuya.mock';
+import * as virtualAnalytics from '../demo/virtual-analytics';
 import {
   AnalyticsService,
   pickLocationDateType,
@@ -94,5 +96,100 @@ describe('AnalyticsService.getDashboard', () => {
     expect(res.locations.items[0]?.name).toBe('河南');
     expect(res.warnings.some((w) => w.includes('回退'))).toBe(true);
     expect(tuya.getLocationsActiveDatas).toHaveBeenCalledTimes(2);
+    expect(res.dataMode).toBe('live');
+  });
+
+  it('does not replace a live OpenAPI failure with virtual series', async () => {
+    const prevProfile = process.env.APP_PROFILE;
+    const prevAnalytics = process.env.DEMO_ANALYTICS;
+    process.env.APP_PROFILE = 'production';
+    process.env.DEMO_ANALYTICS = 'virtual';
+    const virtual = jest.spyOn(virtualAnalytics, 'virtualAnalyticsClient');
+    const tuya = {
+      getAppDeviceStat: jest.fn().mockRejectedValue(new Error('quota 28841002')),
+      getAppUserRegisterStat: jest.fn().mockResolvedValue([]),
+      getAppDeviceControl: jest.fn().mockResolvedValue([]),
+      getLocationsActiveDatas: jest.fn().mockResolvedValue([]),
+    };
+    const svc = new AnalyticsService(tuya as any, {} as any);
+    try {
+      await expect(
+        svc.getDashboard({
+          startDay: '20260701',
+          endDay: '20260702',
+          dataMode: 'virtual',
+        }),
+      ).rejects.toThrow(/28841002/);
+      expect(virtual).not.toHaveBeenCalled();
+      expect(tuya.getAppDeviceStat).toHaveBeenCalled();
+    } finally {
+      virtual.mockRestore();
+      if (prevProfile === undefined) delete process.env.APP_PROFILE;
+      else process.env.APP_PROFILE = prevProfile;
+      if (prevAnalytics === undefined) delete process.env.DEMO_ANALYTICS;
+      else process.env.DEMO_ANALYTICS = prevAnalytics;
+    }
+  });
+
+  it('keeps mock-client charts empty until virtual is requested explicitly', async () => {
+    const prevProfile = process.env.APP_PROFILE;
+    const prevAnalytics = process.env.DEMO_ANALYTICS;
+    process.env.APP_PROFILE = 'demo';
+    delete process.env.DEMO_ANALYTICS;
+    const mock = new TuyaMockClient();
+    const spy = jest.spyOn(mock, 'getAppDeviceStat');
+    const svc = new AnalyticsService(mock, {} as any);
+    try {
+      const refused = await svc.getDashboard({ startDay: '20260701', endDay: '20260703' });
+      expect(refused.dataMode).toBe('live');
+      expect(refused.series.device).toEqual([]);
+      expect(refused.warnings.join('\n')).toContain('X-Demo-Analytics');
+      expect(spy).not.toHaveBeenCalled();
+
+      const virtual = await svc.getDashboard({
+        startDay: '20260701',
+        endDay: '20260703',
+        dataMode: 'virtual',
+      });
+      expect(virtual.dataMode).toBe('virtual');
+      expect(virtual.series.device).toHaveLength(3);
+      expect(virtual.note).toContain('显式演示分析');
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      if (prevProfile === undefined) delete process.env.APP_PROFILE;
+      else process.env.APP_PROFILE = prevProfile;
+      if (prevAnalytics === undefined) delete process.env.DEMO_ANALYTICS;
+      else process.env.DEMO_ANALYTICS = prevAnalytics;
+    }
+  });
+
+  it('ignores a virtual request in production and keeps the live payload', async () => {
+    const prevProfile = process.env.APP_PROFILE;
+    process.env.APP_PROFILE = 'production';
+    const tuya = {
+      getAppDeviceStat: jest.fn().mockResolvedValue([
+        { dt: '20260701', activationNum: 2, activationTotalNum: 100, activeNum: 10 },
+      ]),
+      getAppUserRegisterStat: jest.fn().mockResolvedValue([
+        { dt: '20260701', todayRegisterNum: 1, totalRegisterNum: 50 },
+      ]),
+      getAppDeviceControl: jest.fn().mockResolvedValue([]),
+      getLocationsActiveDatas: jest.fn().mockResolvedValue([]),
+    };
+    const svc = new AnalyticsService(tuya as any, {} as any);
+    try {
+      const res = await svc.getDashboard({
+        startDay: '20260701',
+        endDay: '20260701',
+        dataMode: 'virtual',
+      });
+      expect(res.dataMode).toBe('live');
+      expect(res.kpis.activationTotal).toBe(100);
+      expect(res.warnings.join('\n')).toContain('APP_PROFILE=production');
+    } finally {
+      if (prevProfile === undefined) delete process.env.APP_PROFILE;
+      else process.env.APP_PROFILE = prevProfile;
+    }
   });
 });

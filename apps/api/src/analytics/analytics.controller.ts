@@ -3,12 +3,14 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { parseDemoAnalyticsHeader } from '../demo/analytics-mode';
 import { AuthGuard } from '@nestjs/passport';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -26,6 +28,7 @@ export class AnalyticsController {
     @Query('endDay') endDay?: string,
     @Query('productId') productId?: string,
     @Query('refresh') refresh?: string,
+    @Headers('x-demo-analytics') demoAnalytics?: string,
   ) {
     const range = resolveDefaultRange(startDay, endDay);
     try {
@@ -34,6 +37,7 @@ export class AnalyticsController {
         endDay: range.endDay,
         productId: productId?.trim() || undefined,
         refresh: refresh === '1' || refresh === 'true',
+        dataMode: parseDemoAnalyticsHeader(demoAnalytics),
       });
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : String(err));
@@ -46,6 +50,7 @@ export class AnalyticsController {
     @Query('startDay') startDay?: string,
     @Query('endDay') endDay?: string,
     @Query('productId') productId?: string,
+    @Headers('x-demo-analytics') demoAnalytics?: string,
   ) {
     const range = resolveDefaultRange(startDay, endDay);
     try {
@@ -53,6 +58,7 @@ export class AnalyticsController {
         startDay: range.startDay,
         endDay: range.endDay,
         productId: productId?.trim() || undefined,
+        dataMode: parseDemoAnalyticsHeader(demoAnalytics),
       });
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : String(err));
@@ -84,6 +90,7 @@ export class AnalyticsController {
     @Query('startDay') startDay?: string,
     @Query('endDay') endDay?: string,
     @Query('productId') productId?: string,
+    @Headers('x-demo-analytics') demoAnalytics?: string,
   ) {
     const range = resolveDefaultRange(startDay, endDay);
     try {
@@ -91,6 +98,7 @@ export class AnalyticsController {
         startDay: range.startDay,
         endDay: range.endDay,
         productId: productId?.trim() || undefined,
+        dataMode: parseDemoAnalyticsHeader(demoAnalytics),
       });
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : String(err));
@@ -110,6 +118,7 @@ export class AnalyticsController {
       sections?: string[];
       name?: string;
     },
+    @Headers('x-demo-analytics') demoAnalytics?: string,
   ) {
     try {
       if (!body?.template) throw new Error('template 必填');
@@ -123,6 +132,7 @@ export class AnalyticsController {
         sections: body.sections,
         name: body.name,
         createdByAdminUserId: req.user.id,
+        dataMode: parseDemoAnalyticsHeader(demoAnalytics),
       });
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : String(err));
