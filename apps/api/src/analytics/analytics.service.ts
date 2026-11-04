@@ -20,7 +20,7 @@ import {
   TuyaRegisterStatPoint,
 } from '../tuya/tuya.client';
 import { summarizeFaultCodesByProduct } from './fault-code-breakdown';
-import { extractModeLabel } from './rollup.job';
+import { extractModeLabel } from '../jobs/rollup.job';
 
 const CACHE_TTL_MS = 8 * 60 * 1000;
 const FLEET_PRODUCT_ID = '';

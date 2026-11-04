@@ -1,7 +1,14 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Consumer, Kafka, KafkaMessage, logLevel } from 'kafkajs';
-import { DeviceBusMessage } from './device-bus-message';
+import { Consumer, EachBatchPayload, Kafka, logLevel } from 'kafkajs';
 import { EventHandlerService } from './event-handler.service';
+import {
+  KAFKA_MESSAGE_RETRY_POLICY,
+  consumePartitionBatch,
+  readHandlerBatchSize,
+  readMessageAttempts,
+  readPartitionConcurrency,
+  readRetryDelayMs,
+} from './kafka-batch';
 
 @Injectable()
 export class KafkaConsumer implements OnModuleInit, OnModuleDestroy {
@@ -23,6 +30,7 @@ export class KafkaConsumer implements OnModuleInit, OnModuleDestroy {
       .filter(Boolean);
     const topic = process.env.KAFKA_TOPIC_DEVICE_EVENTS ?? 'tuya.device.events';
     const groupId = process.env.KAFKA_GROUP_ID ?? 'tuya-ops-demo';
+    const partitionsConsumedConcurrently = readPartitionConcurrency();
 
     const kafka = new Kafka({
       clientId: 'tuya-ops-api',
@@ -36,28 +44,19 @@ export class KafkaConsumer implements OnModuleInit, OnModuleDestroy {
       await this.consumer.connect();
       await this.consumer.subscribe({ topic, fromBeginning: false });
       await this.consumer.run({
-        eachMessage: async ({ message }: { message: KafkaMessage }) => {
-          const raw = message.value?.toString();
-          if (!raw) {
-            this.logger.warn('Skipping Kafka message with empty value');
-            return;
-          }
-
-          try {
-            const parsed = JSON.parse(raw) as DeviceBusMessage;
-            if (!parsed.deviceId || !parsed.bizCode || parsed.ts == null) {
-              this.logger.warn(`Invalid DeviceBusMessage shape: ${raw}`);
-              return;
-            }
-            await this.eventHandler.handle(parsed);
-          } catch (err) {
-            this.logger.error(`Failed to process Kafka message: ${raw}`, err);
-          }
+        autoCommit: true,
+        autoCommitThreshold: 1,
+        eachBatchAutoResolve: false,
+        partitionsConsumedConcurrently,
+        eachBatch: async (payload) => {
+          await this.handleBatch(payload);
         },
       });
 
       this.connected = true;
-      this.logger.log(`Kafka consumer subscribed to ${topic} (${groupId})`);
+      this.logger.log(
+        `Kafka consumer subscribed to ${topic} (${groupId}); partitionsConsumedConcurrently=${partitionsConsumedConcurrently}; ${KAFKA_MESSAGE_RETRY_POLICY}`,
+      );
     } catch (err) {
       this.logger.error(
         `Kafka consumer failed to start (brokers=${brokers.join(',')}, topic=${topic}): Redpanda may be unavailable; API will continue without live device events`,
@@ -65,6 +64,38 @@ export class KafkaConsumer implements OnModuleInit, OnModuleDestroy {
       );
       await this.safeDisconnect();
       this.consumer = null;
+    }
+  }
+
+  private async handleBatch(payload: EachBatchPayload): Promise<void> {
+    const { batch } = payload;
+    const result = await consumePartitionBatch(
+      batch.messages.map((message) => ({
+        offset: message.offset,
+        value: message.value,
+      })),
+      {
+        handleMany: (messages) => this.eventHandler.handleMany(messages),
+        maxAttempts: readMessageAttempts(),
+        retryDelayMs: readRetryDelayMs(),
+        batchSize: readHandlerBatchSize(),
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        warn: (message) =>
+          this.logger.warn(`partition=${batch.partition} ${message}`),
+        error: (message, err) =>
+          this.logger.error(`partition=${batch.partition} ${message}`, err),
+        isRunning: payload.isRunning,
+        isStale: payload.isStale,
+        heartbeat: () => payload.heartbeat(),
+      },
+    );
+
+    for (const offset of result.resolvedOffsets) {
+      payload.resolveOffset(offset);
+    }
+    const pending = payload.uncommittedOffsets();
+    if (pending.topics.length > 0) {
+      await payload.commitOffsetsIfNecessary(pending);
     }
   }
 

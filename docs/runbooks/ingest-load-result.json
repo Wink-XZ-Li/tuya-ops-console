@@ -1,0 +1,374 @@
+{
+  "runId": "load-mw1m3lxw",
+  "startedAt": "2026-11-04T04:23:51.010Z",
+  "fixture": "scripts/fixtures/sample-kafka-event.json",
+  "brokers": [
+    "127.0.0.1:19092"
+  ],
+  "topic": "tuya.device.events",
+  "groupId": "tuya-ops-demo",
+  "rate": 50,
+  "durationSec": 120,
+  "deviceCount": 200,
+  "sent": 6000,
+  "lagWarn": 100,
+  "partitions": {
+    "exists": true,
+    "count": 1
+  },
+  "produce": {
+    "elapsedMs": 119901,
+    "achievedPerSec": 50.04,
+    "lagSamples": [
+      {
+        "at": "2026-11-04T04:23:51.029Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:23:53.122Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:23:55.122Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:23:57.123Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:23:59.223Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:01.323Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:03.422Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:05.421Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:07.422Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:09.423Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:11.521Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:13.622Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:15.621Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:17.621Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:19.621Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:21.621Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:23.622Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:25.622Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:27.623Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:29.722Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:31.821Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:33.822Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:35.821Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:37.822Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:39.921Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:41.921Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:44.022Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:46.123Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:48.221Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:50.221Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:52.222Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:54.321Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:56.321Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:24:58.323Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:00.422Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:02.522Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:04.521Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:06.622Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:08.622Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:10.720Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:12.723Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:14.722Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:16.821Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:18.922Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:21.022Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:23.022Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:25.122Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:27.221Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:29.222Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:31.222Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:33.321Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:35.321Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:37.322Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:39.421Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:41.420Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:43.422Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:45.520Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:47.520Z",
+        "lag": 5,
+        "phase": "produce"
+      },
+      {
+        "at": "2026-11-04T04:25:49.523Z",
+        "lag": 5,
+        "phase": "produce"
+      }
+    ]
+  },
+  "latencyMs": {
+    "n": 6000,
+    "min": 9,
+    "p50": 13,
+    "p95": 17,
+    "p99": 18,
+    "max": 23
+  },
+  "lag": {
+    "warn": 100,
+    "samples": [
+      {
+        "at": "2026-11-04T04:25:50.941Z",
+        "lag": 5,
+        "stored": 5995
+      },
+      {
+        "at": "2026-11-04T04:25:52.197Z",
+        "lag": 0,
+        "stored": 6000
+      }
+    ],
+    "peak": 5,
+    "final": 0,
+    "recoveredUnderWarn": true,
+    "peakDuringProduce": 5
+  },
+  "systemHealth": {
+    "ok": true,
+    "overall": "critical",
+    "checkedAt": "2026-11-04T04:25:52.264Z",
+    "kafkaConsumer": {
+      "key": "kafka_consumer",
+      "label": "Kafka 消费",
+      "status": "healthy",
+      "summary": "消费组 Stable，lag 0"
+    },
+    "kafkaLagIssue": null,
+    "issueCodes": [
+      {
+        "code": "API_DEMO_MOCK",
+        "severity": "crit"
+      }
+    ]
+  },
+  "pass": true,
+  "notes": [],
+  "consumerReady": {
+    "joined": true,
+    "state": "Stable",
+    "members": 1
+  },
+  "stored": 6000,
+  "finishedAt": "2026-11-04T04:25:52.443Z"
+}

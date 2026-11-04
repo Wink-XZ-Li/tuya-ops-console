@@ -64,4 +64,20 @@ describe('OfflineRuleJob', () => {
       }),
     });
   });
+
+  it('does not scan when JOBS_ENABLED=false', async () => {
+    const prev = process.env.JOBS_ENABLED;
+    process.env.JOBS_ENABLED = 'false';
+    const prisma = {
+      device: { findMany: jest.fn() },
+      alert: { findFirst: jest.fn(), create: jest.fn() },
+    } as any;
+    try {
+      await new OfflineRuleJob(prisma).tick();
+      expect(prisma.device.findMany).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.JOBS_ENABLED;
+      else process.env.JOBS_ENABLED = prev;
+    }
+  });
 });

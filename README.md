@@ -8,6 +8,7 @@
 | `DEMO_MODE=mock\|live` | 只选择涂鸦客户端（`TuyaMockClient` / `TuyaLiveClient`）。不限制同步或 Kafka 入库。 |
 | `DEVICE_SOFT_CAP` | 舰队软顶。未设置时为 **10000**。`0` / `none` / `unlimited` / `off` 表示不设顶。超过只打 `device_soft_cap` 警告，设备仍然入库。 |
 | `DEMO_SEED_DEVICE_CAP` | 只约束 mock seed，默认 **50**。同步与消息消费不读它。 |
+| `JOBS_ENABLED` | 默认 true。offline / retention / rollup 只在这个 API 进程里跑。**禁止多副本跑 job**（没有分布式锁）。多副本时只有一个进程保持 true，其余设 `false`。见 `docs/runbooks/phase-b-ingest.md`。 |
 
 ## 5 分钟本地 Demo
 
@@ -86,6 +87,7 @@ pnpm demo:smoke
 | `apps/bridge` | Tuya MQ WebSocket → Kafka 桥（live） |
 | `scripts/smoke.sh` | Demo 冒烟脚本 |
 | `scripts/fixtures/` | Kafka 事件样例（如 `sample-kafka-event.json`） |
+| `docs/runbooks/phase-b-ingest.md` | 消费重试、单 API 任务、topic 分区 ≥12 的运维步骤（仓库不改集群） |
 
 ## 常用命令
 

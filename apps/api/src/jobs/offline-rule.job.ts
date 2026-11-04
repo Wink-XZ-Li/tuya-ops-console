@@ -1,29 +1,26 @@
 import { AlertStatus, DeviceOnlineStatus } from '@prisma/client';
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
+import { offlineAlertActiveKey } from '../alerts/backfill-fault-alerts';
 import { PrismaService } from '../prisma/prisma.service';
-import { offlineAlertActiveKey } from './backfill-fault-alerts';
+import { jobsEnabled } from './jobs-enabled';
 
 const OFFLINE_RULE_INTERVAL_MS = 5 * 60 * 1000;
 
 @Injectable()
-export class OfflineRuleJob implements OnModuleInit, OnModuleDestroy {
+export class OfflineRuleJob {
   private readonly logger = new Logger(OfflineRuleJob.name);
   private readonly offlineAlertMinutes = Number(process.env.OFFLINE_ALERT_MINUTES ?? 10);
-  private timer?: NodeJS.Timeout;
 
   constructor(private readonly prisma: PrismaService) {}
 
-  onModuleInit(): void {
-    this.timer = setInterval(() => {
-      void this.run().catch((err) =>
-        this.logger.error('Offline rule job failed', err instanceof Error ? err.stack : err),
-      );
-    }, OFFLINE_RULE_INTERVAL_MS);
-  }
-
-  onModuleDestroy(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
+  @Interval('offline-rule', OFFLINE_RULE_INTERVAL_MS)
+  async tick(): Promise<void> {
+    if (!jobsEnabled()) return;
+    try {
+      await this.run();
+    } catch (err) {
+      this.logger.error('Offline rule job failed', err instanceof Error ? err.stack : err);
     }
   }
 

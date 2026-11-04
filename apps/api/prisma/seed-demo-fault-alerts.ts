@@ -1,6 +1,6 @@
 import { AlertStatus, Prisma, PrismaClient } from '@prisma/client';
 import { backfillFaultAlerts } from '../src/alerts/backfill-fault-alerts';
-import { RollupJob } from '../src/analytics/rollup.job';
+import { RollupJob } from '../src/jobs/rollup.job';
 import { asRecord, decodeBitmapLabels } from '../src/devices/device-derived';
 import { PRODUCT_FAULT_BITMAP_LABELS } from '../src/devices/product-fault-schemas';
 import {

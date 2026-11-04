@@ -1,35 +1,36 @@
 import { AlertStatus } from '@prisma/client';
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Interval } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { jobsEnabled } from './jobs-enabled';
 
 const RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
-export class RetentionJob implements OnModuleInit, OnModuleDestroy {
+export class RetentionJob implements OnModuleInit {
   private readonly logger = new Logger(RetentionJob.name);
   // Raw event/log retention (env override). Rollup tables (DailyDeviceMetric /
   // DailyFaultStat / OpsReport) are NOT purged here.
   private readonly retentionDays = Number(process.env.RETENTION_DAYS ?? 90);
-  private timer?: NodeJS.Timeout;
 
   constructor(private readonly prisma: PrismaService) {}
 
   onModuleInit(): void {
+    if (!jobsEnabled()) return;
     if (process.env.RETENTION_RUN_ON_START === 'true') {
       void this.run().catch((err) =>
         this.logger.error('Retention job failed on start', err instanceof Error ? err.stack : err),
       );
     }
-    this.timer = setInterval(() => {
-      void this.run().catch((err) =>
-        this.logger.error('Retention job failed', err instanceof Error ? err.stack : err),
-      );
-    }, RETENTION_INTERVAL_MS);
   }
 
-  onModuleDestroy(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
+  @Interval('retention', RETENTION_INTERVAL_MS)
+  async tick(): Promise<void> {
+    if (!jobsEnabled()) return;
+    try {
+      await this.run();
+    } catch (err) {
+      this.logger.error('Retention job failed', err instanceof Error ? err.stack : err);
     }
   }
 
