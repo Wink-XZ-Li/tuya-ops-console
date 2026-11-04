@@ -227,6 +227,7 @@ describe('DevicesService', () => {
       deviceEvent: {
         findMany: jest.fn().mockResolvedValue([
           {
+            bizCode: 'devicePropertyMessage',
             eventTime: new Date('2026-10-22T00:10:00.000Z'),
             payload: {
               status: [
@@ -238,6 +239,7 @@ describe('DevicesService', () => {
             },
           },
           {
+            bizCode: 'devicePropertyMessage',
             eventTime: new Date('2026-10-22T02:00:00.000Z'),
             payload: { status: [{ code: 'steam_temp_current', value: 42 }] },
           },
@@ -267,8 +269,8 @@ describe('DevicesService', () => {
     expect(prisma.deviceEvent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          deviceId: 'internal-1',
-          bizCode: { in: ['devicePropertyMessage', 'property', 'devicePropertyChange'] },
+        deviceId: 'internal-1',
+        eventTime: { gte: new Date('2026-10-22T00:00:00.000Z'), lte: new Date('2026-10-22T03:00:00.000Z') },
         }),
       }),
     );
@@ -303,10 +305,12 @@ describe('DevicesService', () => {
       deviceEvent: {
         findMany: jest.fn().mockResolvedValue([
           {
+            bizCode: 'devicePropertyMessage',
             eventTime: new Date('2026-10-22T00:00:00.000Z'),
             payload: { status: [{ code: 'gas_consumption', value: 100 }] },
           },
           {
+            bizCode: 'devicePropertyMessage',
             eventTime: new Date('2026-10-22T06:00:00.000Z'),
             payload: { status: [{ dpId: 24, value: 250 }] },
           },
@@ -362,7 +366,7 @@ describe('DevicesService', () => {
         where: expect.objectContaining({
           deviceId: 'internal-1',
           eventTime: { lt: new Date('2026-10-16T00:00:00.000Z') },
-          bizCode: { in: ['online', 'deviceOnline', 'offline', 'deviceOffline'] },
+          bizCode: 'online',
         }),
       }),
     );
@@ -392,6 +396,7 @@ describe('DevicesService', () => {
           if (where.eventTime.lt) {
             return [
               {
+                bizCode: 'devicePropertyMessage',
                 eventTime: new Date('2026-10-15T00:00:00.000Z'),
                 payload: {
                   status: [
@@ -404,10 +409,12 @@ describe('DevicesService', () => {
           }
           return [
             {
+              bizCode: 'devicePropertyMessage',
               eventTime: new Date('2026-10-20T00:00:00.000Z'),
               payload: { status: [{ dpId: 15, value: 'heating' }] },
             },
             {
+              bizCode: 'devicePropertyMessage',
               eventTime: new Date('2026-10-21T00:00:00.000Z'),
               payload: { status: [{ code: 'flame_status', value: true }] },
             },
@@ -426,7 +433,6 @@ describe('DevicesService', () => {
         where: expect.objectContaining({
           deviceId: 'internal-1',
           eventTime: { lt: new Date('2026-10-16T00:00:00.000Z') },
-          bizCode: { in: ['devicePropertyMessage', 'property', 'devicePropertyChange'] },
         }),
       }),
     );
@@ -517,5 +523,36 @@ describe('DevicesService', () => {
         detail: 'true',
       },
     ]);
+  });
+});
+
+describe('DevicesService long windows', () => {
+  it('pages a 7-day status bar and connectivity scan instead of taking 8000', async () => {
+    const takes: Array<number | undefined> = [];
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1', productId: '1x0qz5jtlabxywcg' }),
+      },
+      deviceEvent: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn(async (args: { take?: number }) => {
+          takes.push(args.take);
+          return [];
+        }),
+      },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    await svc.statusBars('vdevo1', {
+      from: '2026-10-16T00:00:00.000Z',
+      to: '2026-10-23T00:00:00.000Z',
+    });
+    expect(takes).toEqual([200, 400]);
+    takes.length = 0;
+    await svc.connectivity('vdevo1', {
+      from: '2026-10-16T00:00:00.000Z',
+      to: '2026-10-23T00:00:00.000Z',
+    });
+    expect(takes).toEqual([400]);
+    expect(takes.some((take) => take === 8000 || take === 4000)).toBe(false);
   });
 });

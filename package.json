@@ -12,6 +12,7 @@
     "demo:mock": "pnpm --filter @tuya-ops/api exec prisma migrate deploy && pnpm --filter @tuya-ops/api prisma:seed && pnpm seed:mock",
     "demo:smoke": "bash scripts/smoke.sh",
     "ingest:load": "bash scripts/ingest-load.sh",
+    "query:load": "bash scripts/query-load.sh",
     "tuya:probe": "node scripts/probe-tuya-openapi.cjs"
   },
   "engines": {

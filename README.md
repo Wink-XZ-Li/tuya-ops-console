@@ -88,6 +88,7 @@ pnpm demo:smoke
 | `scripts/smoke.sh` | Demo 冒烟脚本 |
 | `scripts/fixtures/` | Kafka 事件样例（如 `sample-kafka-event.json`） |
 | `docs/runbooks/phase-b-ingest.md` | 消费重试、单 API 任务、topic 分区 ≥12 的运维步骤（仓库不改集群） |
+| `docs/runbooks/phase-c-query.md` | 看板走日汇总、详情长窗降采样、事件冷归档和分批 retention |
 
 ## 常用命令
 

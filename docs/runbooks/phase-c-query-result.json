@@ -1,0 +1,71 @@
+{
+  "deviceCount": 3000,
+  "eventDays": 7,
+  "budgetMs": 2000,
+  "seededAt": "2026-11-04T05:56:13.341Z",
+  "timingsMs": {
+    "deviceList": 6,
+    "faultBoard": 23,
+    "deviceListPlusFaults": 29,
+    "detail7d": 52,
+    "retentionBatch": 38
+  },
+  "explain": {
+    "deviceList": [
+      {
+        "table": "Device",
+        "type": "index",
+        "possibleKeys": null,
+        "key": "Device_createdAt_idx",
+        "rows": 20,
+        "extra": "Backward index scan; Using index"
+      }
+    ],
+    "faultDistinct": [
+      {
+        "table": "a",
+        "type": "ALL",
+        "possibleKeys": "Alert_status_openedAt_idx,Alert_deviceId_status_idx,Alert_deviceId_faultCode_status_idx,Alert_category_status_idx,Alert_category_openedAt_idx,Alert_status_closedAt_idx",
+        "key": null,
+        "rows": 80,
+        "extra": "Using where"
+      },
+      {
+        "table": "d",
+        "type": "eq_ref",
+        "possibleKeys": "PRIMARY",
+        "key": "PRIMARY",
+        "rows": 1,
+        "extra": "Using index"
+      }
+    ],
+    "detailPage": [
+      {
+        "table": "DeviceEvent",
+        "type": "range",
+        "possibleKeys": "DeviceEvent_deviceId_eventTime_idx,DeviceEvent_eventTime_idx,DeviceEvent_deviceId_bizCode_eventTime_idx",
+        "key": "DeviceEvent_deviceId_eventTime_idx",
+        "rows": 9600,
+        "extra": "Using where; Using index"
+      }
+    ]
+  },
+  "detail": {
+    "ms": 52,
+    "pages": 13,
+    "rows": 5047,
+    "maxPageRows": 400
+  },
+  "pass": true,
+  "seeded": {
+    "devices": 3000,
+    "events": 26040,
+    "busyInternalId": "cmw1peegj0000jsbg3oz50cfl",
+    "busyDeviceId": "qload-00000"
+  },
+  "retentionBatch": {
+    "ms": 38,
+    "deleted": 1000,
+    "batchSize": 1000
+  }
+}

@@ -19,8 +19,8 @@ import {
   TuyaLocationDateType,
   TuyaRegisterStatPoint,
 } from '../tuya/tuya.client';
+import { weightedMttrMinutes } from '../jobs/fault-rollup';
 import { summarizeFaultCodesByProduct } from './fault-code-breakdown';
-import { extractModeLabel } from '../jobs/rollup.job';
 
 const CACHE_TTL_MS = 8 * 60 * 1000;
 const FLEET_PRODUCT_ID = '';
@@ -191,27 +191,14 @@ export class AnalyticsService {
     const rangeStart = ymdToDate(startDay);
     const rangeEndExclusive = ymdToDate(endDay);
     rangeEndExclusive.setDate(rangeEndExclusive.getDate() + 1);
-    const faultAlertWhere: Prisma.AlertWhereInput = {
-      ...alertWhere,
-      category: 'fault',
-    };
 
-    const [faultDevicesNow, openAlerts, closedWithDuration, daily, devicesForCorr, surveyPack, inServiceDevices, qualityFaultRows, pendingFaultRows] =
+    const [faultDevicesNow, openAlerts, daily, faultGroups, locationGroups, surveyPack, inServiceDevices, qualityFaultDevices, pendingDeviceCount] =
       await Promise.all([
         this.prisma.device.count({
           where: { ...deviceWhere, faultStatus: DeviceFaultStatus.fault },
         }),
         this.prisma.alert.count({
           where: { ...alertWhere, status: { not: AlertStatus.closed } },
-        }),
-        this.prisma.alert.findMany({
-          where: {
-            ...faultAlertWhere,
-            status: AlertStatus.closed,
-            closedAt: { gte: rangeStart, lt: rangeEndExclusive },
-          },
-          select: { openedAt: true, closedAt: true, conditionStartedAt: true },
-          take: 5000,
         }),
         this.prisma.dailyFaultStat.findMany({
           where: {
@@ -220,43 +207,33 @@ export class AnalyticsService {
           },
           orderBy: [{ day: 'asc' }, { faultCode: 'asc' }],
         }),
-        this.prisma.device.findMany({
+        this.prisma.device.groupBy({
+          by: ['productId', 'faultInfo'],
           where: { ...deviceWhere, faultStatus: DeviceFaultStatus.fault },
-          select: { productId: true, faultInfo: true, locationText: true, lat: true, lon: true },
+          _count: { _all: true },
+        }),
+        this.prisma.device.groupBy({
+          by: ['locationText', 'lat', 'lon'],
+          where: { ...deviceWhere, faultStatus: DeviceFaultStatus.fault },
+          _count: { _all: true },
         }),
         this.getFaultSurvey(productId),
         this.prisma.device.count({ where: deviceWhere }),
-        this.prisma.alert.findMany({
-          where: {
-            ...faultAlertWhere,
-            openedAt: { lt: rangeEndExclusive },
-            OR: [{ closedAt: null }, { closedAt: { gte: rangeStart } }],
-          },
-          select: { deviceId: true },
-          distinct: ['deviceId'],
+        this.countDistinctFaultDevices({
+          productId,
+          rangeStart,
+          rangeEndExclusive,
+          openOnly: false,
         }),
-        this.prisma.alert.findMany({
-          where: {
-            ...faultAlertWhere,
-            status: { not: AlertStatus.closed },
-          },
-          select: { deviceId: true },
-          distinct: ['deviceId'],
+        this.countDistinctFaultDevices({
+          productId,
+          rangeStart,
+          rangeEndExclusive,
+          openOnly: true,
         }),
       ]);
 
-    const durationSamples = closedWithDuration
-      .filter((a) => a.closedAt)
-      .map((a) => {
-        const start = a.conditionStartedAt ?? a.openedAt;
-        return Math.max(0, Math.round((a.closedAt!.getTime() - start.getTime()) / 60000));
-      });
-    const avgDurationMinutes =
-      durationSamples.length > 0
-        ? Math.round(durationSamples.reduce((s, n) => s + n, 0) / durationSamples.length)
-        : null;
-    const qualityFaultDevices = qualityFaultRows.length;
-    const pendingDeviceCount = pendingFaultRows.length;
+    const avgDurationMinutes = weightedMttrMinutes(daily);
     const qualityFaultRate =
       inServiceDevices > 0
         ? Number((qualityFaultDevices / inServiceDevices).toFixed(4))
@@ -301,26 +278,27 @@ export class AnalyticsService {
         liveFaultDevices: 0,
       });
     }
-    for (const d of devicesForCorr) {
-      const faultCode = (d.faultInfo?.trim() || 'device_fault').slice(0, 128);
-      const key = `${d.productId}\0${faultCode}`;
+    for (const group of faultGroups) {
+      const faultCode = (group.faultInfo?.trim() || 'device_fault').slice(0, 128);
+      const key = `${group.productId}\0${faultCode}`;
+      const count = group._count._all;
       const existing = correlationMap.get(key);
       if (existing) {
-        existing.liveFaultDevices += 1;
+        existing.liveFaultDevices += count;
       } else {
         correlationMap.set(key, {
-          productId: d.productId,
+          productId: group.productId,
           faultCode,
           newCount: 0,
-          liveFaultDevices: 1,
+          liveFaultDevices: count,
         });
       }
     }
 
     const locationMap = new Map<string, number>();
-    for (const d of devicesForCorr) {
-      const loc = presentLocationText(d.locationText, d.lat, d.lon)?.trim() || 'unknown';
-      locationMap.set(loc, (locationMap.get(loc) ?? 0) + 1);
+    for (const group of locationGroups) {
+      const loc = presentLocationText(group.locationText, group.lat, group.lon)?.trim() || 'unknown';
+      locationMap.set(loc, (locationMap.get(loc) ?? 0) + group._count._all);
     }
 
     return {
@@ -371,15 +349,11 @@ export class AnalyticsService {
 
     const deviceWhere: Prisma.DeviceWhereInput = productId ? { productId } : {};
 
-    const [liveDevices, dailyFleet, dailyByProduct] = await Promise.all([
-      this.prisma.device.findMany({
+    const [liveGroups, dailyFleet, dailyByProduct] = await Promise.all([
+      this.prisma.device.groupBy({
+        by: ['productId', 'onlineStatus', 'faultStatus'],
         where: deviceWhere,
-        select: {
-          productId: true,
-          onlineStatus: true,
-          faultStatus: true,
-          statusJson: true,
-        },
+        _count: { _all: true },
       }),
       this.prisma.dailyDeviceMetric.findMany({
         where: {
@@ -400,53 +374,47 @@ export class AnalyticsService {
     let online = 0;
     let offline = 0;
     let fault = 0;
+    let total = 0;
     const byProductLive = new Map<
       string,
       { productId: string; online: number; offline: number; fault: number; total: number }
     >();
-    const modeCounts: Record<string, number> = {};
 
-    for (const d of liveDevices) {
-      const bucket = byProductLive.get(d.productId) ?? {
-        productId: d.productId,
+    for (const row of liveGroups) {
+      const count = row._count._all;
+      const bucket = byProductLive.get(row.productId) ?? {
+        productId: row.productId,
         online: 0,
         offline: 0,
         fault: 0,
         total: 0,
       };
-      bucket.total += 1;
-      if (d.onlineStatus === DeviceOnlineStatus.online) {
-        online += 1;
-        bucket.online += 1;
-      } else if (d.onlineStatus === DeviceOnlineStatus.offline) {
-        offline += 1;
-        bucket.offline += 1;
+      bucket.total += count;
+      total += count;
+      if (row.onlineStatus === DeviceOnlineStatus.online) {
+        online += count;
+        bucket.online += count;
+      } else if (row.onlineStatus === DeviceOnlineStatus.offline) {
+        offline += count;
+        bucket.offline += count;
       }
-      if (d.faultStatus === DeviceFaultStatus.fault) {
-        fault += 1;
-        bucket.fault += 1;
+      if (row.faultStatus === DeviceFaultStatus.fault) {
+        fault += count;
+        bucket.fault += count;
       }
-      byProductLive.set(d.productId, bucket);
-
-      const mode = extractModeLabel(d.statusJson);
-      if (mode) modeCounts[mode] = (modeCounts[mode] ?? 0) + 1;
+      byProductLive.set(row.productId, bucket);
     }
 
-    const total = liveDevices.length;
     const onlineRate = total > 0 ? Number((online / total).toFixed(4)) : 0;
 
-    // Prefer latest rollup modeCounts when live parse is empty.
+    // Mode mix is the latest DailyDeviceMetric snapshot. The request path does not parse statusJson.
     const latestRollup = dailyFleet[dailyFleet.length - 1];
-    const rollupModes =
+    const modes =
       latestRollup?.modeCounts &&
       typeof latestRollup.modeCounts === 'object' &&
       !Array.isArray(latestRollup.modeCounts)
         ? (latestRollup.modeCounts as Record<string, number>)
         : {};
-    const modes =
-      Object.keys(modeCounts).length > 0
-        ? modeCounts
-        : rollupModes;
 
     return {
       startDay,
@@ -677,6 +645,36 @@ export class AnalyticsService {
       throw new NotFoundException(`报告不存在：${id}`);
     }
     return report;
+  }
+
+  private async countDistinctFaultDevices(input: {
+    productId?: string;
+    rangeStart: Date;
+    rangeEndExclusive: Date;
+    openOnly: boolean;
+  }): Promise<number> {
+    const productSql = input.productId ? 'AND d.productId = ?' : '';
+    const windowSql = input.openOnly
+      ? `a.status <> 'closed'`
+      : `a.openedAt < ? AND (a.closedAt IS NULL OR a.closedAt >= ?)`;
+    const params: unknown[] = [];
+    if (!input.openOnly) {
+      params.push(input.rangeEndExclusive, input.rangeStart);
+    }
+    if (input.productId) params.push(input.productId);
+    const rows = await this.prisma.$queryRawUnsafe<Array<{ n: unknown }>>(
+      `SELECT COUNT(DISTINCT a.deviceId) AS n
+       FROM Alert a
+       INNER JOIN Device d ON d.id = a.deviceId
+       WHERE a.category = 'fault'
+         AND ${windowSql}
+         ${productSql}`,
+      ...params,
+    );
+    const n = rows[0]?.n;
+    if (typeof n === 'bigint') return Number(n);
+    const parsed = Number(n ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
   private async fetchLocations(

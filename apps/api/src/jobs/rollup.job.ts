@@ -1,16 +1,20 @@
-import {
-  AlertStatus,
-  DeviceFaultStatus,
-  DeviceOnlineStatus,
-  Prisma,
-} from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  FAULT_ROLLUP_WHERE_SQL,
+  FLEET_PRODUCT_ID,
+  asCount,
+  mergeFaultGroups,
+  mttrMinutesAvg,
+} from './fault-rollup';
 import { jobsEnabled } from './jobs-enabled';
 
+export { faultDurationMinutes, rollupFaultCode } from './fault-rollup';
+
 const ROLLUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const FLEET_PRODUCT_ID = '';
+const MODE_PAGE_SIZE = 400;
 
 type ModeCounts = Record<string, number>;
 
@@ -60,15 +64,6 @@ export class RollupJob implements OnModuleInit {
   }
 
   private async rollupDeviceMetrics(dayKey: string): Promise<void> {
-    const devices = await this.prisma.device.findMany({
-      select: {
-        productId: true,
-        onlineStatus: true,
-        faultStatus: true,
-        statusJson: true,
-      },
-    });
-
     type Bucket = {
       onlineCount: number;
       offlineCount: number;
@@ -76,6 +71,24 @@ export class RollupJob implements OnModuleInit {
       totalDevices: number;
       modeCounts: ModeCounts;
     };
+
+    const grouped = await this.prisma.$queryRawUnsafe<
+      Array<{
+        productId: string;
+        onlineCount: unknown;
+        offlineCount: unknown;
+        faultCount: unknown;
+        totalDevices: unknown;
+      }>
+    >(`
+      SELECT productId,
+             CAST(SUM(onlineStatus = 'online') AS SIGNED) AS onlineCount,
+             CAST(SUM(onlineStatus = 'offline') AS SIGNED) AS offlineCount,
+             CAST(SUM(faultStatus = 'fault') AS SIGNED) AS faultCount,
+             CAST(COUNT(*) AS SIGNED) AS totalDevices
+      FROM Device
+      GROUP BY productId
+    `);
 
     const byProduct = new Map<string, Bucket>();
     const fleet: Bucket = {
@@ -86,29 +99,41 @@ export class RollupJob implements OnModuleInit {
       modeCounts: {},
     };
 
-    const bump = (b: Bucket, device: (typeof devices)[number]) => {
-      b.totalDevices += 1;
-      if (device.onlineStatus === DeviceOnlineStatus.online) b.onlineCount += 1;
-      else if (device.onlineStatus === DeviceOnlineStatus.offline) b.offlineCount += 1;
-      if (device.faultStatus === DeviceFaultStatus.fault) b.faultCount += 1;
-      const mode = extractModeLabel(device.statusJson);
-      if (mode) b.modeCounts[mode] = (b.modeCounts[mode] ?? 0) + 1;
-    };
+    for (const row of grouped) {
+      const bucket: Bucket = {
+        onlineCount: asCount(row.onlineCount),
+        offlineCount: asCount(row.offlineCount),
+        faultCount: asCount(row.faultCount),
+        totalDevices: asCount(row.totalDevices),
+        modeCounts: {},
+      };
+      byProduct.set(row.productId, bucket);
+      fleet.onlineCount += bucket.onlineCount;
+      fleet.offlineCount += bucket.offlineCount;
+      fleet.faultCount += bucket.faultCount;
+      fleet.totalDevices += bucket.totalDevices;
+    }
 
-    for (const device of devices) {
-      bump(fleet, device);
-      let bucket = byProduct.get(device.productId);
-      if (!bucket) {
-        bucket = {
-          onlineCount: 0,
-          offlineCount: 0,
-          faultCount: 0,
-          totalDevices: 0,
-          modeCounts: {},
-        };
-        byProduct.set(device.productId, bucket);
+    // modeCounts live inside statusJson. Page them; the numeric snapshot above is the GROUP BY.
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await this.prisma.device.findMany({
+        take: MODE_PAGE_SIZE,
+        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+        orderBy: { id: 'asc' },
+        select: { id: true, productId: true, statusJson: true },
+      });
+      for (const device of page) {
+        const mode = extractModeLabel(device.statusJson);
+        if (!mode) continue;
+        fleet.modeCounts[mode] = (fleet.modeCounts[mode] ?? 0) + 1;
+        const bucket = byProduct.get(device.productId);
+        if (!bucket) continue;
+        bucket.modeCounts[mode] = (bucket.modeCounts[mode] ?? 0) + 1;
       }
-      bump(bucket, device);
+      if (page.length < MODE_PAGE_SIZE) break;
+      cursor = page[page.length - 1]?.id;
+      if (!cursor) break;
     }
 
     const upserts: Array<Promise<unknown>> = [
@@ -162,153 +187,111 @@ export class RollupJob implements OnModuleInit {
     start: Date,
     end: Date,
   ): Promise<void> {
+    const where = FAULT_ROLLUP_WHERE_SQL;
     const [opened, closed, stillOpen] = await Promise.all([
-      this.prisma.alert.findMany({
-        where: { openedAt: { gte: start, lt: end } },
-        select: {
-          faultCode: true,
-          category: true,
-          device: { select: { productId: true } },
-        },
-      }),
-      this.prisma.alert.findMany({
-        where: {
-          status: AlertStatus.closed,
-          closedAt: { gte: start, lt: end },
-        },
-        select: {
-          faultCode: true,
-          category: true,
-          openedAt: true,
-          closedAt: true,
-          conditionStartedAt: true,
-          device: { select: { productId: true } },
-        },
-      }),
-      this.prisma.alert.findMany({
-        where: {
-          status: { not: AlertStatus.closed },
-          openedAt: { lt: end },
-        },
-        select: {
-          faultCode: true,
-          category: true,
-          device: { select: { productId: true } },
-        },
-      }),
+      this.prisma.$queryRawUnsafe<
+        Array<{ productId: string; faultCode: string; newCount: unknown }>
+      >(
+        `
+        SELECT d.productId AS productId,
+               TRIM(a.faultCode) AS faultCode,
+               CAST(COUNT(*) AS SIGNED) AS newCount
+        FROM Alert a
+        INNER JOIN Device d ON d.id = a.deviceId
+        WHERE a.openedAt >= ? AND a.openedAt < ?
+          AND ${where}
+        GROUP BY d.productId, TRIM(a.faultCode)
+        `,
+        start,
+        end,
+      ),
+      this.prisma.$queryRawUnsafe<
+        Array<{ productId: string; faultCode: string; closedCount: unknown; mttrSum: unknown }>
+      >(
+        `
+        SELECT d.productId AS productId,
+               TRIM(a.faultCode) AS faultCode,
+               CAST(COUNT(*) AS SIGNED) AS closedCount,
+               CAST(SUM(GREATEST(0, ROUND(
+                 TIMESTAMPDIFF(MICROSECOND, COALESCE(a.conditionStartedAt, a.openedAt), a.closedAt) / 60000000
+               ))) AS SIGNED) AS mttrSum
+        FROM Alert a
+        INNER JOIN Device d ON d.id = a.deviceId
+        WHERE a.status = 'closed'
+          AND a.closedAt >= ? AND a.closedAt < ?
+          AND ${where}
+        GROUP BY d.productId, TRIM(a.faultCode)
+        `,
+        start,
+        end,
+      ),
+      this.prisma.$queryRawUnsafe<
+        Array<{ productId: string; faultCode: string; openCount: unknown }>
+      >(
+        `
+        SELECT d.productId AS productId,
+               TRIM(a.faultCode) AS faultCode,
+               CAST(COUNT(*) AS SIGNED) AS openCount
+        FROM Alert a
+        INNER JOIN Device d ON d.id = a.deviceId
+        WHERE a.status <> 'closed'
+          AND a.openedAt < ?
+          AND ${where}
+        GROUP BY d.productId, TRIM(a.faultCode)
+        `,
+        end,
+      ),
     ]);
-
-    type FaultBucket = {
-      openCount: number;
-      newCount: number;
-      closedCount: number;
-      mttrSum: number;
-      mttrN: number;
-    };
-
-    const keyOf = (productId: string, faultCode: string) => `${productId}\0${faultCode}`;
-    const buckets = new Map<string, FaultBucket>();
-
-    const ensure = (productId: string, faultCode: string): FaultBucket => {
-      const k = keyOf(productId, faultCode);
-      let b = buckets.get(k);
-      if (!b) {
-        b = { openCount: 0, newCount: 0, closedCount: 0, mttrSum: 0, mttrN: 0 };
-        buckets.set(k, b);
-      }
-      return b;
-    };
 
     await this.prisma.dailyFaultStat.deleteMany({ where: { day: dayKey } });
 
-    for (const row of opened) {
-      const faultCode = rollupFaultCode(row);
-      if (!faultCode) continue;
-      const productId = row.device.productId;
-      ensure(productId, faultCode).newCount += 1;
-      ensure(FLEET_PRODUCT_ID, faultCode).newCount += 1;
-    }
+    const buckets = mergeFaultGroups({
+      opened: opened.map((row) => ({
+        productId: row.productId,
+        faultCode: row.faultCode,
+        newCount: asCount(row.newCount),
+      })),
+      closed: closed.map((row) => ({
+        productId: row.productId,
+        faultCode: row.faultCode,
+        closedCount: asCount(row.closedCount),
+        mttrSum: asCount(row.mttrSum),
+      })),
+      stillOpen: stillOpen.map((row) => ({
+        productId: row.productId,
+        faultCode: row.faultCode,
+        openCount: asCount(row.openCount),
+      })),
+    });
 
-    for (const row of closed) {
-      const faultCode = rollupFaultCode(row);
-      const closedAt = row.closedAt;
-      if (!faultCode || !closedAt) continue;
-      const productId = row.device.productId;
-      for (const pid of [productId, FLEET_PRODUCT_ID]) {
-        const b = ensure(pid, faultCode);
-        b.closedCount += 1;
-        b.mttrSum += faultDurationMinutes({
-          openedAt: row.openedAt,
-          closedAt,
-          conditionStartedAt: row.conditionStartedAt,
-        });
-        b.mttrN += 1;
-      }
-    }
-
-    for (const row of stillOpen) {
-      const faultCode = rollupFaultCode(row);
-      if (!faultCode) continue;
-      ensure(row.device.productId, faultCode).openCount += 1;
-      ensure(FLEET_PRODUCT_ID, faultCode).openCount += 1;
-    }
-
-    for (const [composite, bucket] of buckets) {
-      const sep = composite.indexOf('\0');
-      const productId = composite.slice(0, sep);
-      const faultCode = composite.slice(sep + 1);
-      if (
-        !faultCode ||
-        faultCode === 'unknown' ||
-        (bucket.newCount === 0 && bucket.openCount === 0 && bucket.closedCount === 0)
-      ) {
-        continue;
-      }
-      const mttrMinutesAvg =
-        bucket.mttrN > 0 ? Math.round(bucket.mttrSum / bucket.mttrN) : null;
-
+    for (const bucket of buckets) {
+      const avg = mttrMinutesAvg(bucket);
       await this.prisma.dailyFaultStat.upsert({
         where: {
-          day_productId_faultCode: { day: dayKey, productId, faultCode },
+          day_productId_faultCode: {
+            day: dayKey,
+            productId: bucket.productId,
+            faultCode: bucket.faultCode,
+          },
         },
         create: {
           day: dayKey,
-          productId,
-          faultCode,
+          productId: bucket.productId,
+          faultCode: bucket.faultCode,
           openCount: bucket.openCount,
           newCount: bucket.newCount,
           closedCount: bucket.closedCount,
-          mttrMinutesAvg,
+          mttrMinutesAvg: avg,
         },
         update: {
           openCount: bucket.openCount,
           newCount: bucket.newCount,
           closedCount: bucket.closedCount,
-          mttrMinutesAvg,
+          mttrMinutesAvg: avg,
         },
       });
     }
   }
-}
-
-/** Fault-stat key. Connectivity, offline, blank, and `unknown` are omitted so they are not written. */
-export function rollupFaultCode(row: {
-  faultCode?: string | null;
-  category?: string | null;
-}): string | null {
-  if (row.category === 'connectivity' || row.faultCode === 'offline') return null;
-  const code = row.faultCode?.trim();
-  if (!code || code === 'unknown') return null;
-  return code;
-}
-
-export function faultDurationMinutes(row: {
-  openedAt: Date;
-  closedAt: Date;
-  conditionStartedAt?: Date | null;
-}): number {
-  const start = row.conditionStartedAt ?? row.openedAt;
-  return Math.max(0, Math.round((row.closedAt.getTime() - start.getTime()) / 60000));
 }
 
 export function extractModeLabel(statusJson: unknown): string | null {

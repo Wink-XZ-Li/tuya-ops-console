@@ -344,15 +344,19 @@ export function aggregateDpSeries(
   });
 }
 
-export function buildDpTrends(input: {
-  events: Array<{ payload: unknown; eventTime: Date }>;
+export type TrendEvent = { payload: unknown; eventTime: Date };
+
+export type TrendFoldInput = {
   schema: TrendDpSchema[];
   defaults: string[];
   requested: string[];
   from: Date;
   to: Date;
   bucket: TrendBucket;
-}): TrendSeries[] {
+};
+
+/** Same series math as a single pass over events. Long windows call `add` once per page. */
+export function createTrendFold(input: TrendFoldInput) {
   const schema = input.schema;
   const numericList = schema.filter((dp) => isTrendValueDp(dp.type) && !isHiddenTrendDp(dp));
   const numericCodes = schema.length > 0 ? new Set(numericList.map((dp) => dp.code)) : null;
@@ -368,32 +372,43 @@ export function buildDpTrends(input: {
   const counts = new Map<string, number>();
   const samples: DpSample[] = [];
 
-  for (const event of input.events) {
-    for (const raw of extractDpSamples(event.payload, event.eventTime)) {
-      const code = resolveDpToken(raw.code, schema);
-      if (isHiddenTrendDp({ code, name: meta.get(code)?.name })) continue;
-      if (numericCodes && !numericCodes.has(code)) continue;
-      const value = applyDpScale(raw.value, schemaScale(meta.get(code)?.values));
-      if (raw.t >= countFrom && raw.t <= toMs) {
-        counts.set(code, (counts.get(code) ?? 0) + 1);
+  return {
+    add(events: TrendEvent[]) {
+      for (const event of events) {
+        for (const raw of extractDpSamples(event.payload, event.eventTime)) {
+          const code = resolveDpToken(raw.code, schema);
+          if (isHiddenTrendDp({ code, name: meta.get(code)?.name })) continue;
+          if (numericCodes && !numericCodes.has(code)) continue;
+          const value = applyDpScale(raw.value, schemaScale(meta.get(code)?.values));
+          if (raw.t >= countFrom && raw.t <= toMs) {
+            counts.set(code, (counts.get(code) ?? 0) + 1);
+          }
+          if (raw.t >= fromMs && raw.t <= toMs) {
+            samples.push({ code, t: raw.t, value });
+          }
+        }
       }
-      if (raw.t >= fromMs && raw.t <= toMs) {
-        samples.push({ code, t: raw.t, value });
-      }
-    }
-  }
+    },
+    finish(): TrendSeries[] {
+      const codes = chooseTrendCodes({ requested, defaults, counts, numericCodes });
+      return aggregateDpSeries(samples, codes, fromMs, toMs, input.bucket).map((series) => {
+        const dp = meta.get(series.dpId);
+        const unit = schemaUnit(dp?.values);
+        return {
+          dpId: series.dpId,
+          name: dp?.name || series.dpId,
+          unit,
+          points: series.points,
+        };
+      });
+    },
+  };
+}
 
-  const codes = chooseTrendCodes({ requested, defaults, counts, numericCodes });
-  return aggregateDpSeries(samples, codes, fromMs, toMs, input.bucket).map((series) => {
-    const dp = meta.get(series.dpId);
-    const unit = schemaUnit(dp?.values);
-    return {
-      dpId: series.dpId,
-      name: dp?.name || series.dpId,
-      unit,
-      points: series.points,
-    };
-  });
+export function buildDpTrends(input: TrendFoldInput & { events: TrendEvent[] }): TrendSeries[] {
+  const fold = createTrendFold(input);
+  fold.add(input.events);
+  return fold.finish();
 }
 
 export function trendCountWindow(from: Date, to: Date, count: boolean): Date {

@@ -28,14 +28,23 @@ import {
   TREND_PROPERTY_BIZ_CODES,
   bucketForRange,
   applyDpScale,
-  buildDpTrends,
+  createTrendFold,
   extractDpRawSamples,
   extractDpSamples,
   needsReportCounts,
   resolveDpToken,
   trendCountWindow,
 } from './dp-trends';
-import { buildUsage, usageBucketForRange, type UsageBucket } from './usage';
+import {
+  buildUsage,
+  flattenUsageSlots,
+  rememberCumulativeSample,
+  shanghaiDayStart,
+  shanghaiHourStart,
+  usageBucketForRange,
+  type UsageBucket,
+  type UsageSample,
+} from './usage';
 import { usageMetricsForProduct } from './usage-metrics';
 import { CONNECTIVITY_BIZ_CODES, buildConnectivityTimeline } from './connectivity';
 import { FIRMWARE_BIZ_CODES, buildChangeMarkers } from './change-markers';
@@ -45,6 +54,16 @@ import {
   statusBarDpsForProduct,
   statusLabel,
 } from './status-bars';
+import {
+  LOOKBACK_MAX_PAGES,
+  LOOKBACK_PAGE_SIZE,
+  bucketKey,
+  compareEvents,
+  eventHotCutoff,
+  forEachEventPage,
+  isShortEventWindow,
+  longWindowBucketMs,
+} from './event-window';
 
 export interface ListDevicesParams {
   q?: string;
@@ -277,30 +296,21 @@ export class DevicesService {
       to,
       needsReportCounts(requested, defaults, numericCodes),
     );
-
-    const events = await this.prisma.deviceEvent.findMany({
-      where: {
-        deviceId: device.id,
-        eventTime: { gte: loadFrom, lte: to },
-        bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
-      },
-      select: { payload: true, eventTime: true },
-      orderBy: { eventTime: 'asc' },
-    });
+    const fold = createTrendFold({ schema, defaults, requested, from, to, bucket });
+    const bizCode = { in: [...TREND_PROPERTY_BIZ_CODES] };
+    if (isShortEventWindow(loadFrom, to)) {
+      fold.add(await this.loadShortEvents(device.id, loadFrom, to, bizCode, { payload: true, eventTime: true }));
+    } else {
+      await this.scanLongEvents(device.id, loadFrom, to, bizCode, { id: true, payload: true, eventTime: true }, (page) => {
+        fold.add(page);
+      });
+    }
 
     return {
       from: from.toISOString(),
       to: to.toISOString(),
       bucket,
-      series: buildDpTrends({
-        events,
-        schema,
-        defaults,
-        requested,
-        from,
-        to,
-        bucket,
-      }),
+      series: fold.finish(),
     };
   }
 
@@ -332,24 +342,31 @@ export class DevicesService {
       throw new BadRequestException('区间不能超过 90 天');
     }
     const bucket = query.bucket ?? usageBucketForRange(to.getTime() - from.getTime());
-
     const schema = getProductDps(device.productId);
-    const events = await this.prisma.deviceEvent.findMany({
-      where: {
-        deviceId: device.id,
-        eventTime: { gte: from, lte: to },
-        bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
-      },
-      select: { payload: true, eventTime: true },
-      orderBy: { eventTime: 'asc' },
-    });
-
-    const samples = [];
-    for (const event of events) {
-      for (const raw of extractDpSamples(event.payload, event.eventTime)) {
-        if (resolveDpToken(raw.code, schema) !== metric.sourceDpId) continue;
-        samples.push({ t: raw.t, value: applyDpScale(raw.value, metric.scale) });
+    const bizCode = { in: [...TREND_PROPERTY_BIZ_CODES] };
+    const samples: UsageSample[] = [];
+    const collect = (events: Array<{ payload: unknown; eventTime: Date }>) => {
+      for (const event of events) {
+        for (const raw of extractDpSamples(event.payload, event.eventTime)) {
+          if (resolveDpToken(raw.code, schema) !== metric.sourceDpId) continue;
+          samples.push({ t: raw.t, value: applyDpScale(raw.value, metric.scale) });
+        }
       }
+    };
+    if (isShortEventWindow(from, to)) {
+      collect(await this.loadShortEvents(device.id, from, to, bizCode, { payload: true, eventTime: true }));
+    } else {
+      const slots = new Map<number, { first: UsageSample; last: UsageSample; dip: UsageSample | null }>();
+      const bucketStart = bucket === 'hour' ? shanghaiHourStart : shanghaiDayStart;
+      await this.scanLongEvents(device.id, from, to, bizCode, { id: true, payload: true, eventTime: true }, (page) => {
+        for (const event of page) {
+          for (const raw of extractDpSamples(event.payload, event.eventTime)) {
+            if (resolveDpToken(raw.code, schema) !== metric.sourceDpId) continue;
+            rememberCumulativeSample(slots, { t: raw.t, value: applyDpScale(raw.value, metric.scale) }, bucketStart(raw.t));
+          }
+        }
+      });
+      samples.push(...flattenUsageSlots(slots));
     }
 
     return {
@@ -390,17 +407,35 @@ export class DevicesService {
     }
 
     const bizCode = { in: [...CONNECTIVITY_BIZ_CODES] };
-    const prior = await this.prisma.deviceEvent.findFirst({
-      where: { deviceId: device.id, eventTime: { lt: from }, bizCode },
-      orderBy: { eventTime: 'desc' },
-      select: { bizCode: true, eventTime: true },
-    });
-    const events = await this.prisma.deviceEvent.findMany({
-      where: { deviceId: device.id, eventTime: { gte: from, lte: to }, bizCode },
-      orderBy: { eventTime: 'asc' },
-      select: { bizCode: true, eventTime: true },
-      take: 4000,
-    });
+    const prior = await this.latestEventBefore(device.id, from, bizCode);
+    const points: Array<{ t: number; bizCode: string }> = [];
+    if (isShortEventWindow(from, to)) {
+      const events = await this.loadShortEvents(device.id, from, to, bizCode, {
+        bizCode: true,
+        eventTime: true,
+      });
+      for (const event of events) points.push({ t: event.eventTime.getTime(), bizCode: String(event.bizCode) });
+    } else {
+      const bucketMs = longWindowBucketMs(from, to);
+      const fromMs = from.getTime();
+      const kept = new Map<number, { t: number; bizCode: string }>();
+      await this.scanLongEvents(
+        device.id,
+        from,
+        to,
+        bizCode,
+        { id: true, bizCode: true, eventTime: true },
+        (page) => {
+          for (const event of page) {
+            const t = event.eventTime.getTime();
+            const key = bucketKey(t, fromMs, bucketMs);
+            const prev = kept.get(key);
+            if (!prev || t >= prev.t) kept.set(key, { t, bizCode: String(event.bizCode) });
+          }
+        },
+      );
+      points.push(...[...kept.values()].sort((a, b) => a.t - b.t));
+    }
 
     return {
       from: from.toISOString(),
@@ -410,7 +445,7 @@ export class DevicesService {
         from,
         to,
         prior: prior ? { t: prior.eventTime.getTime(), bizCode: prior.bizCode } : null,
-        events: events.map((event) => ({ t: event.eventTime.getTime(), bizCode: event.bizCode })),
+        events: points,
       }),
     };
   }
@@ -449,45 +484,56 @@ export class DevicesService {
     const schema = getProductDps(device.productId);
     const byCode = new Map(configured.map((dp) => [dp.dpId, dp]));
     const bizCode = { in: [...TREND_PROPERTY_BIZ_CODES] };
-    const [lookback, events] = await Promise.all([
-      this.prisma.deviceEvent.findMany({
-        where: { deviceId: device.id, eventTime: { lt: from }, bizCode },
-        orderBy: { eventTime: 'desc' },
-        select: { payload: true, eventTime: true },
-        take: 2000,
-      }),
-      this.prisma.deviceEvent.findMany({
-        where: { deviceId: device.id, eventTime: { gte: from, lte: to }, bizCode },
-        orderBy: { eventTime: 'asc' },
-        select: { payload: true, eventTime: true },
-        take: 8000,
-      }),
-    ]);
-
     const prior = new Map<string, { t: number; value: string }>();
-    for (const event of lookback) {
-      for (const sample of extractDpRawSamples(event.payload, event.eventTime)) {
-        const code = resolveDpToken(sample.code, schema);
-        const dp = byCode.get(code);
-        if (!dp || prior.has(code)) continue;
-        const value = normalizeStatusValue(dp, sample.value);
-        if (!value) continue;
-        prior.set(code, { t: sample.t, value });
-      }
-      if (prior.size === byCode.size) break;
-    }
+    await this.fillStatusPrior(device.id, from, schema, byCode, prior);
 
     const points = new Map<string, Array<{ t: number; value: string }>>();
-    for (const event of events) {
-      for (const sample of extractDpRawSamples(event.payload, event.eventTime)) {
-        const code = resolveDpToken(sample.code, schema);
-        const dp = byCode.get(code);
-        if (!dp) continue;
-        const value = normalizeStatusValue(dp, sample.value);
-        if (!value) continue;
-        const list = points.get(code) ?? [];
-        list.push({ t: sample.t, value });
-        points.set(code, list);
+    const pushPoint = (code: string, point: { t: number; value: string }) => {
+      const list = points.get(code) ?? [];
+      list.push(point);
+      points.set(code, list);
+    };
+    if (isShortEventWindow(from, to)) {
+      const events = await this.loadShortEvents(device.id, from, to, bizCode, { payload: true, eventTime: true });
+      for (const event of events) {
+        for (const sample of extractDpRawSamples(event.payload, event.eventTime)) {
+          const code = resolveDpToken(sample.code, schema);
+          const dp = byCode.get(code);
+          if (!dp) continue;
+          const value = normalizeStatusValue(dp, sample.value);
+          if (!value) continue;
+          pushPoint(code, { t: sample.t, value });
+        }
+      }
+    } else {
+      const bucketMs = longWindowBucketMs(from, to);
+      const fromMs = from.getTime();
+      const folded = new Map<string, Map<number, { t: number; value: string }>>();
+      await this.scanLongEvents(
+        device.id,
+        from,
+        to,
+        bizCode,
+        { id: true, payload: true, eventTime: true },
+        (page) => {
+          for (const event of page) {
+            for (const sample of extractDpRawSamples(event.payload, event.eventTime)) {
+              const code = resolveDpToken(sample.code, schema);
+              const dp = byCode.get(code);
+              if (!dp) continue;
+              const value = normalizeStatusValue(dp, sample.value);
+              if (!value) continue;
+              const key = bucketKey(sample.t, fromMs, bucketMs);
+              const byBucket = folded.get(code) ?? new Map<number, { t: number; value: string }>();
+              const prev = byBucket.get(key);
+              if (!prev || sample.t >= prev.t) byBucket.set(key, { t: sample.t, value });
+              folded.set(code, byBucket);
+            }
+          }
+        },
+      );
+      for (const [code, byBucket] of folded) {
+        for (const point of [...byBucket.values()].sort((a, b) => a.t - b.t)) pushPoint(code, point);
       }
     }
 
@@ -613,6 +659,137 @@ export class DevicesService {
   }
 
   /** Device-user APIs are often empty; the device record's uid is the owner the user page already shows. */
+  private eventTables(from: Date): Array<{
+    findMany: (query: Record<string, unknown>) => Promise<Array<{ id?: string; eventTime: Date; bizCode?: string; payload?: unknown }>>;
+    findFirst?: (query: Record<string, unknown>) => Promise<{ bizCode: string; eventTime: Date } | null>;
+  }> {
+    const hot = this.prisma.deviceEvent as unknown as {
+      findMany: (query: Record<string, unknown>) => Promise<Array<{ id?: string; eventTime: Date; bizCode?: string; payload?: unknown }>>;
+      findFirst?: (query: Record<string, unknown>) => Promise<{ bizCode: string; eventTime: Date } | null>;
+    };
+    const tables = [hot];
+    const archive = (
+      this.prisma as unknown as {
+        deviceEventArchive?: (typeof tables)[number];
+      }
+    ).deviceEventArchive;
+    if (archive?.findMany && from.getTime() < eventHotCutoff().getTime()) {
+      tables.push(archive);
+    }
+    return tables;
+  }
+
+  private async loadShortEvents(
+    deviceId: string,
+    from: Date,
+    to: Date,
+    bizCode: { in: readonly string[] },
+    select: Record<string, boolean>,
+  ): Promise<Array<{ id?: string; eventTime: Date; bizCode?: string; payload: unknown }>> {
+    const allowed = new Set<string>(bizCode.in);
+    const where = { deviceId, eventTime: { gte: from, lte: to } };
+    const chunks = await Promise.all(
+      this.eventTables(from).map((table) =>
+        table.findMany({
+          where,
+          orderBy: [{ eventTime: 'asc' }, { id: 'asc' }],
+          select: { ...select, bizCode: true },
+        }),
+      ),
+    );
+    return chunks
+      .flat()
+      .filter((row) => allowed.has(String(row.bizCode)))
+      .sort(compareEvents) as Array<{
+      id?: string;
+      eventTime: Date;
+      bizCode?: string;
+      payload: unknown;
+    }>;
+  }
+
+  private async scanLongEvents(
+    deviceId: string,
+    from: Date,
+    to: Date,
+    bizCode: { in: readonly string[] },
+    select: Record<string, boolean>,
+    onPage: (page: Array<{ id?: string; eventTime: Date; bizCode?: string; payload: unknown }>) => void,
+  ): Promise<void> {
+    const allowed = new Set<string>(bizCode.in);
+    const where = { deviceId, eventTime: { gte: from, lte: to } };
+    for (const table of this.eventTables(from)) {
+      await forEachEventPage(
+        (query) => table.findMany(query as unknown as Record<string, unknown>),
+        where,
+        { ...select, bizCode: true },
+        (page) => {
+          const matched = page.filter((row) => allowed.has(String(row.bizCode)));
+          if (matched.length > 0) {
+            onPage(matched as Array<{ id?: string; eventTime: Date; bizCode?: string; payload: unknown }>);
+          }
+        },
+      );
+    }
+  }
+
+  private async latestEventBefore(
+    deviceId: string,
+    from: Date,
+    bizCode: { in: readonly string[] },
+  ): Promise<{ bizCode: string; eventTime: Date } | null> {
+    const found: Array<{ bizCode: string; eventTime: Date }> = [];
+    for (const table of this.eventTables(from)) {
+      if (!table.findFirst) continue;
+      for (const code of bizCode.in) {
+        const row = await table.findFirst({
+          where: { deviceId, eventTime: { lt: from }, bizCode: code },
+          orderBy: { eventTime: 'desc' },
+          select: { bizCode: true, eventTime: true },
+        });
+        if (row) found.push(row);
+      }
+    }
+    found.sort((a, b) => b.eventTime.getTime() - a.eventTime.getTime());
+    return found[0] ?? null;
+  }
+
+  private async fillStatusPrior(
+    deviceId: string,
+    from: Date,
+    schema: ReturnType<typeof getProductDps>,
+    byCode: Map<string, { dpId: string; type: 'enum' | 'bool'; range: string[] }>,
+    prior: Map<string, { t: number; value: string }>,
+  ): Promise<void> {
+    for (const table of this.eventTables(from)) {
+      let cursor = from;
+      for (let page = 0; page < LOOKBACK_MAX_PAGES && prior.size < byCode.size; page += 1) {
+        const rows = await table.findMany({
+          where: { deviceId, eventTime: { lt: cursor } },
+          orderBy: [{ eventTime: 'desc' }, { id: 'desc' }],
+          take: LOOKBACK_PAGE_SIZE,
+          select: { id: true, payload: true, eventTime: true },
+        });
+        if (rows.length === 0) break;
+        for (const event of rows) {
+          for (const sample of extractDpRawSamples(event.payload, event.eventTime)) {
+            const code = resolveDpToken(sample.code, schema);
+            const dp = byCode.get(code);
+            if (!dp || prior.has(code)) continue;
+            const value = normalizeStatusValue(dp, sample.value);
+            if (!value) continue;
+            prior.set(code, { t: sample.t, value });
+          }
+          if (prior.size === byCode.size) break;
+        }
+        if (rows.length < LOOKBACK_PAGE_SIZE) break;
+        const last = rows[rows.length - 1];
+        if (!last?.eventTime || last.eventTime.getTime() >= cursor.getTime()) break;
+        cursor = last.eventTime;
+      }
+    }
+  }
+
   private async syncOwnerBinding(internalId: string, tuyaDeviceId: string): Promise<void> {
     const profiles = await this.tuya.getDeviceUserProfiles(tuyaDeviceId);
     let owners = profiles.filter((profile) => profile.tuyaUid && !profile.tuyaUid.startsWith('uid-demo-'));
