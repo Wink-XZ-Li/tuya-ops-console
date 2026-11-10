@@ -248,6 +248,17 @@ describe('buildUsage', () => {
     expect(dustHour.total).toBe(0.001);
     expect(dustDay.total).toBe(dustHour.total);
     expect(dustHour.days.some((bucket) => bucket.value === 0)).toBe(false);
+
+    const dipped = collect(
+      [at('2026-10-22T02:00:00.000Z', 999), at('2026-10-22T06:00:00.000Z', 1005)],
+      at('2026-10-21T12:00:00.000Z', 1000),
+      'hour',
+      from,
+      to,
+    );
+    expect(dipped.total).toBe(6);
+    expect(dipped.note).toContain('历史总量');
+    expect(collect([at('2026-10-22T02:00:00.000Z', 2)], null, 'hour', from, to).note).toContain('没有把它记成 0');
   });
 
   it('attributes a step across midnight to the later Shanghai hour, not the anchor day', () => {

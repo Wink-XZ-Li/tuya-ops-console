@@ -687,6 +687,26 @@ export class DevicesService {
     return tables;
   }
 
+  /**
+   * Lookback can be older than the hot table even when `from` is recent.
+   * Hot is searched first. Archive is next only when hot did not hit the page cap.
+   */
+  private usageBaselineTables(): Array<{
+    findMany: (query: Record<string, unknown>) => Promise<Array<{ id?: string; eventTime: Date; bizCode?: string; payload?: unknown }>>;
+  }> {
+    const hot = this.prisma.deviceEvent as unknown as {
+      findMany: (query: Record<string, unknown>) => Promise<Array<{ id?: string; eventTime: Date; bizCode?: string; payload?: unknown }>>;
+    };
+    const tables = [hot];
+    const archive = (
+      this.prisma as unknown as {
+        deviceEventArchive?: (typeof tables)[number];
+      }
+    ).deviceEventArchive;
+    if (archive?.findMany) tables.push(archive);
+    return tables;
+  }
+
   private async loadShortEvents(
     deviceId: string,
     from: Date,
@@ -754,7 +774,7 @@ export class DevicesService {
   ): Promise<{ sample: UsageSample | null; anchor: UsageAnchor }> {
     const fromMs = from.getTime();
     const propertyCodes = new Set<string>(TREND_PROPERTY_BIZ_CODES);
-    for (const table of this.eventTables(from)) {
+    for (const table of this.usageBaselineTables()) {
       let cursor = from;
       let cursorId: string | null = null;
       let capped = false;

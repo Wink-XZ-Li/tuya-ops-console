@@ -577,6 +577,59 @@ describe('DevicesService', () => {
     expect(gas.note).not.toContain('精确');
   });
 
+  it('reads an archived pre-window sample when the hot table has already ended', async () => {
+    const from = '2026-11-09T02:24:00.000Z';
+    const to = '2026-11-10T02:24:00.000Z';
+    const pulseMs = Date.parse('2026-11-10T07:30:09.757+08:00');
+    const priorMs = Date.parse('2026-10-20T01:00:00.000Z');
+    const findMany = jest.fn(async (query: { where?: unknown }) => {
+      if (JSON.stringify(query.where ?? {}).includes('"lt"')) {
+        return [
+          {
+            id: 'hot-other',
+            bizCode: 'devicePropertyMessage',
+            eventTime: new Date('2026-11-09T01:00:00.000Z'),
+            payload: { properties: [{ code: 'flame_level', value: 1 }] },
+          },
+        ];
+      }
+      return [
+        {
+          id: 'gas-pulse',
+          bizCode: 'devicePropertyMessage',
+          eventTime: new Date(pulseMs),
+          payload: { properties: [{ code: 'gas_consumption', value: 1, time: pulseMs }] },
+        },
+        {
+          id: 'gas-reset',
+          bizCode: 'devicePropertyMessage',
+          eventTime: new Date(pulseMs + 1000),
+          payload: { properties: [{ code: 'gas_consumption', value: 0, time: pulseMs + 1000 }] },
+        },
+      ];
+    });
+    const archiveFindMany = jest.fn(async () => [
+      {
+        id: 'archived-zero',
+        bizCode: 'devicePropertyMessage',
+        eventTime: new Date(priorMs),
+        payload: { properties: [{ code: 'gas_consumption', value: 0, time: priorMs }] },
+      },
+    ]);
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1', productId: 'ckjfqtnqqystvfaa' }),
+      },
+      deviceEvent: { findMany },
+      deviceEventArchive: { findMany: archiveFindMany },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const gas = await svc.usage('boiler-1', { metric: 'gas', from, to, bucket: 'hour' });
+    expect(archiveFindMany).toHaveBeenCalled();
+    expect(gas.anchor).toBe('found');
+    expect(gas.days).toEqual([{ date: '2026-11-10T07:00', value: 0.1 }]);
+  });
+
   it('builds the connectivity ribbon from online and offline device events, not alerts', async () => {
     const prisma = {
       device: {

@@ -11,6 +11,7 @@ export const USAGE_GAP_NOTE = '缺测时段没有按平均用量补齐。';
 export const USAGE_OPENING_NOTE = '窗口前没有这条读数，首笔无法差分，没有把它记成 0。';
 export const USAGE_LOOKBACK_NOTE =
   '窗口前回查达到上限，更早的锚点未确认，没有把未知增量记成 0。';
+export const USAGE_BOUNDARY_DIP_NOTE = '窗前读数高于窗口内读数，回落没有按历史总量计入。';
 
 export type UsageAnchor = 'found' | 'absent' | 'limited';
 
@@ -92,11 +93,13 @@ export function buildUsage(input: {
   let reset = false;
   let skippedGap = false;
   let openingUnresolved = false;
+  let boundaryDip = false;
   let rawTotal = 0;
   if (input.mode === 'cumulative') {
     const folded = foldCumulative(baseline ? [baseline, ...samples] : samples, bucket, baseline != null);
     reset = folded.reset;
     openingUnresolved = folded.openingUnresolved;
+    boundaryDip = folded.boundaryDip;
     for (const [start, value] of folded.buckets) {
       const safe = Math.max(0, value);
       rawTotal += safe;
@@ -137,6 +140,7 @@ export function buildUsage(input: {
     skippedGap ? USAGE_GAP_NOTE : '',
     anchor === 'limited' ? USAGE_LOOKBACK_NOTE : '',
     anchor !== 'limited' && openingUnresolved ? USAGE_OPENING_NOTE : '',
+    boundaryDip ? USAGE_BOUNDARY_DIP_NOTE : '',
   ].filter(Boolean);
   return {
     bucket,
@@ -174,13 +178,21 @@ function foldCumulative(samples: UsageSample[], bucket: UsageBucket, anchored: b
   buckets: Array<[number, number]>;
   reset: boolean;
   openingUnresolved: boolean;
+  boundaryDip: boolean;
 } {
   const totals = new Map<number, number>();
   let reset = false;
-  let openingUnresolved = false;
+  let openingUnresolved = !anchored && samples.length === 1;
+  let boundaryDip = false;
   const bucketStart = bucket === 'hour' ? shanghaiHourStart : shanghaiDayStart;
   for (let index = 1; index < samples.length; index += 1) {
-    const step = applyUsageStep(samples[index - 1].value, samples[index].value);
+    const previous = samples[index - 1].value;
+    const next = samples[index].value;
+    if (index === 1 && anchored && next < previous && next > 0) {
+      boundaryDip = true;
+      continue;
+    }
+    const step = applyUsageStep(previous, next);
     if (index === 1 && step.add === 0) {
       if (!anchored) openingUnresolved = true;
       continue;
@@ -193,6 +205,7 @@ function foldCumulative(samples: UsageSample[], bucket: UsageBucket, anchored: b
     buckets: [...totals.entries()].sort((a, b) => a[0] - b[0]),
     reset,
     openingUnresolved,
+    boundaryDip,
   };
 }
 
