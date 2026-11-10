@@ -90,6 +90,13 @@ export function flattenUsageSlots(slots: Map<number, UsageSlot>): UsageSample[] 
 
 export function buildUsage(input: {
   samples: UsageSample[];
+  /**
+   * Last reading of this meter at or before the window. It is not usage.
+   * Cycle counters emit a period total and then fall to 0; when that total is
+   * the first in-window sample, the diff needs this earlier reading. If nothing
+   * was stored before the window, the opening sample stays the anchor.
+   */
+  baseline?: UsageSample | null;
   from: Date;
   to: Date;
   mode: UsageMode;
@@ -108,12 +115,13 @@ export function buildUsage(input: {
   const samples = input.samples
     .filter((sample) => sample.t >= fromMs && sample.t <= toMs && Number.isFinite(sample.value))
     .sort((a, b) => a.t - b.t);
+  const baseline = input.mode === 'cumulative' ? precedingBaseline(samples, input.baseline) : null;
 
   const days: UsageDay[] = [];
   let reset = false;
   let skippedGap = false;
   if (bucket === 'hour' && input.mode === 'cumulative') {
-    const hourly = diffCumulativeByHour(samples);
+    const hourly = diffCumulativeByHour(baseline ? [baseline, ...samples] : samples, baseline != null);
     reset = hourly.reset;
     for (const [start, value] of hourly.hours) {
       days.push({ date: formatShanghaiStamp(start, 'hour'), value: roundMetric(Math.max(0, value)) });
@@ -122,10 +130,19 @@ export function buildUsage(input: {
     const size = bucket === 'hour' ? HOUR_MS : DAY_MS;
     let cursor = bucket === 'hour' ? shanghaiHourStart(fromMs) : shanghaiDayStart(fromMs);
     const last = bucket === 'hour' ? shanghaiHourStart(toMs) : shanghaiDayStart(toMs);
+    let anchorLeft = baseline;
     while (cursor <= last) {
       const bucketEnd = cursor + size;
-      const inBucket = samples.filter((sample) => sample.t >= cursor && sample.t < bucketEnd);
-      const computed = input.mode === 'instant' ? integrateInstant(inBucket) : diffCumulative(inBucket);
+      let inBucket = samples.filter((sample) => sample.t >= cursor && sample.t < bucketEnd);
+      let anchored = false;
+      if (anchorLeft && inBucket.length > 0) {
+        if (anchorLeft.t < inBucket[0].t) {
+          inBucket = [anchorLeft, ...inBucket];
+          anchored = true;
+        }
+        anchorLeft = null;
+      }
+      const computed = input.mode === 'instant' ? integrateInstant(inBucket) : diffCumulative(inBucket, anchored);
       if (computed) {
         days.push({
           date: formatShanghaiStamp(cursor, bucket),
@@ -148,43 +165,58 @@ export function buildUsage(input: {
   return { bucket, days, total, dailyAvg, peakDay, note: notes.length > 0 ? notes.join('') : null };
 }
 
-/** Attribute each meter step to the Shanghai hour of the later reading. Hours with no step are omitted. */
-function diffCumulativeByHour(samples: UsageSample[]): {
+/** A stored reading before the window. An empty series does not invent usage from it. */
+function precedingBaseline(
+  samples: UsageSample[],
+  baseline: UsageSample | null | undefined,
+): UsageSample | null {
+  if (!baseline || !Number.isFinite(baseline.t) || !Number.isFinite(baseline.value)) return null;
+  if (samples.length === 0 || !(baseline.t < samples[0].t)) return null;
+  return baseline;
+}
+
+function applyUsageStep(previous: number, next: number): { add: number; reset: boolean } {
+  const delta = next - previous;
+  if (delta >= 0) return { add: delta, reset: false };
+  return { add: Math.max(0, next), reset: true };
+}
+
+/**
+ * Attribute each meter step to the Shanghai hour of the later reading.
+ * Hours with no step are omitted. A flat step off a pre-window anchor is not a step.
+ */
+function diffCumulativeByHour(samples: UsageSample[], anchored = false): {
   hours: Array<[number, number]>;
   reset: boolean;
 } {
   const totals = new Map<number, number>();
   let reset = false;
   for (let index = 1; index < samples.length; index += 1) {
-    const delta = samples[index].value - samples[index - 1].value;
-    let add = 0;
-    if (delta >= 0) {
-      add = delta;
-    } else {
-      reset = true;
-      add = Math.max(0, samples[index].value);
-    }
+    const step = applyUsageStep(samples[index - 1].value, samples[index].value);
+    if (index === 1 && anchored && step.add === 0) continue;
+    if (step.reset) reset = true;
     const hour = shanghaiHourStart(samples[index].t);
-    totals.set(hour, (totals.get(hour) ?? 0) + add);
+    totals.set(hour, (totals.get(hour) ?? 0) + step.add);
   }
   return { hours: [...totals.entries()].sort((a, b) => a[0] - b[0]), reset };
 }
 
 function diffCumulative(
   samples: UsageSample[],
+  anchored = false,
 ): { value: number; reset: boolean; skippedGap: boolean } | null {
   if (samples.length < 2) return null;
   let value = 0;
   let reset = false;
+  let used = false;
   for (let index = 1; index < samples.length; index += 1) {
-    const delta = samples[index].value - samples[index - 1].value;
-    if (delta >= 0) {
-      value += delta;
-    } else {
-      reset = true;
-      value += Math.max(0, samples[index].value);
-    }
+    const step = applyUsageStep(samples[index - 1].value, samples[index].value);
+    if (index === 1 && anchored && step.add === 0) continue;
+    if (step.reset) reset = true;
+    value += step.add;
+    used = true;
   }
+  if (!used) return null;
   return { value, reset, skippedGap: false };
 }
 

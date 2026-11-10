@@ -58,6 +58,7 @@ import {
 import {
   LOOKBACK_MAX_PAGES,
   LOOKBACK_PAGE_SIZE,
+  USAGE_BASELINE_MAX_PAGES,
   bucketKey,
   compareEvents,
   eventHotCutoff,
@@ -345,6 +346,13 @@ export class DevicesService {
     const bucket = query.bucket ?? usageBucketForRange(to.getTime() - from.getTime());
     const schema = getProductDps(device.productId);
     const bizCode = { in: [...TREND_PROPERTY_BIZ_CODES] };
+    const baselinePromise = this.latestUsageSampleBefore(
+      device.id,
+      from,
+      schema,
+      metric.sourceDpId,
+      metric.scale,
+    );
     const samples: UsageSample[] = [];
     const collect = (events: Array<{ payload: unknown; eventTime: Date }>) => {
       for (const event of events) {
@@ -377,7 +385,7 @@ export class DevicesService {
       unit: metric.unit,
       from: from.toISOString(),
       to: to.toISOString(),
-      ...buildUsage({ samples, from, to, mode: metric.mode, bucket }),
+      ...buildUsage({ samples, baseline: await baselinePromise, from, to, mode: metric.mode, bucket }),
     };
   }
 
@@ -732,6 +740,69 @@ export class DevicesService {
         },
       );
     }
+  }
+
+  /**
+   * Latest stored value of one usage DP before `from`.
+   * Empty property lists are skipped. A missing DP is not treated as zero.
+   */
+  private async latestUsageSampleBefore(
+    deviceId: string,
+    from: Date,
+    schema: ReturnType<typeof getProductDps>,
+    sourceDpId: string,
+    scale: number,
+  ): Promise<UsageSample | null> {
+    const fromMs = from.getTime();
+    const propertyCodes = new Set<string>(TREND_PROPERTY_BIZ_CODES);
+    for (const table of this.eventTables(from)) {
+      let cursor = from;
+      let cursorId: string | null = null;
+      for (let page = 0; page < USAGE_BASELINE_MAX_PAGES; page += 1) {
+        const rows = await table.findMany({
+          where: cursorId
+            ? {
+                deviceId,
+                bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
+                OR: [
+                  { eventTime: { lt: cursor } },
+                  { AND: [{ eventTime: cursor }, { id: { lt: cursorId } }] },
+                ],
+              }
+            : {
+                deviceId,
+                bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
+                eventTime: { lt: cursor },
+              },
+          orderBy: [{ eventTime: 'desc' }, { id: 'desc' }],
+          take: LOOKBACK_PAGE_SIZE,
+          select: { id: true, payload: true, eventTime: true, bizCode: true },
+        });
+        if (rows.length === 0) break;
+        for (const event of rows) {
+          const eventMs = event.eventTime instanceof Date ? event.eventTime.getTime() : Number.NaN;
+          if (!Number.isFinite(eventMs) || eventMs >= fromMs) continue;
+          if (event.bizCode && !propertyCodes.has(String(event.bizCode))) continue;
+          let picked: UsageSample | null = null;
+          for (const raw of extractDpSamples(event.payload, event.eventTime)) {
+            if (resolveDpToken(raw.code, schema) !== sourceDpId) continue;
+            if (raw.t >= fromMs) continue;
+            if (!picked || raw.t >= picked.t) {
+              picked = { t: raw.t, value: applyDpScale(raw.value, scale) };
+            }
+          }
+          if (picked) return picked;
+        }
+        if (rows.length < LOOKBACK_PAGE_SIZE) break;
+        const last = rows[rows.length - 1];
+        if (!last?.id || !(last.eventTime instanceof Date)) break;
+        if (cursorId && last.id === cursorId && last.eventTime.getTime() === cursor.getTime()) break;
+        if (last.eventTime.getTime() > cursor.getTime()) break;
+        cursor = last.eventTime;
+        cursorId = last.id;
+      }
+    }
+    return null;
   }
 
   private async latestEventBefore(
