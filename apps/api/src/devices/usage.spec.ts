@@ -1,16 +1,21 @@
 import { getProductDps } from './product-dp-schemas';
+import {
+  DEVICE_6cacc0e565a69e000flgna as DEVICE1,
+  DEVICE_6cd64f1804551a53b01wkg as DEVICE2,
+  SNAPSHOT_FROM,
+  SNAPSHOT_TO,
+  type SnapshotPoint,
+} from './usage-snapshot.fixture';
 import { buildUsage, type UsageBucket, type UsageSample } from './usage';
 import { usageMetricsForProduct } from './usage-metrics';
 
-/** 2026-11-10 10:24 快照里的 24h 查询窗，不是实时生产数据。 */
-const WINDOW_FROM = new Date('2026-11-09T10:24:00+08:00');
-const WINDOW_TO = new Date('2026-11-10T10:24:00+08:00');
-/** 7 天逐小时能找回首笔，是因为窗前最后读数是清零后的 0，不是因为把首值本身加进去。 */
-const PRIOR_RESET = { t: Date.parse('2026-11-09T07:30:00+08:00'), value: 0 };
+/** 2026-11-10 10:24 快照的 24h 查询窗。文件本身从这一刻开始，里面没有更早的事件。 */
+const WINDOW_FROM = new Date(SNAPSHOT_FROM);
+const WINDOW_TO = new Date(SNAPSHOT_TO);
 
-function scaled(raw: Array<[string, number]>, scale: number): UsageSample[] {
+function scaled(points: SnapshotPoint[], scale: number): UsageSample[] {
   const factor = 10 ** scale;
-  return raw.map(([iso, value]) => ({ t: Date.parse(iso), value: value / factor }));
+  return points.map((point) => ({ t: point.t, value: point.raw / factor }));
 }
 
 function at(iso: string, value: number): UsageSample {
@@ -68,24 +73,23 @@ describe('buildUsage', () => {
   const from = new Date('2026-10-21T16:00:00.000Z');
   const to = new Date('2026-10-24T16:00:00.000Z');
 
-  it('diffs a cumulative meter inside the Shanghai day and omits days without two readings', () => {
-    const built = buildUsage({
-      mode: 'cumulative',
-      from,
-      to,
-      samples: [
-        { t: Date.parse('2026-10-22T00:00:00.000Z'), value: 10 },
-        { t: Date.parse('2026-10-22T08:00:00.000Z'), value: 18 },
-        { t: Date.parse('2026-10-23T02:00:00.000Z'), value: 4 },
-      ],
-    });
+  it('counts a cross-day reset as the new reading and keeps the day total equal to the hours', () => {
+    const samples = [
+      { t: Date.parse('2026-10-22T00:00:00.000Z'), value: 10 },
+      { t: Date.parse('2026-10-22T08:00:00.000Z'), value: 18 },
+      { t: Date.parse('2026-10-23T02:00:00.000Z'), value: 4 },
+    ];
+    const built = buildUsage({ mode: 'cumulative', from, to, samples });
+    const hourly = buildUsage({ mode: 'cumulative', bucket: 'hour', from, to, samples });
 
-    expect(built.days).toEqual([{ date: '2026-10-22', value: 8 }]);
-    expect(built.total).toBe(8);
-    expect(built.dailyAvg).toBe(8);
-    expect(built.peakDay).toEqual({ date: '2026-10-22', value: 8 });
-    expect(built.note).toBeNull();
-    expect(built.days.some((day) => day.date === '2026-10-23' || day.value === 0)).toBe(false);
+    expect(built.days).toEqual([
+      { date: '2026-10-22', value: 8 },
+      { date: '2026-10-23', value: 4 },
+    ]);
+    expect(built.total).toBe(12);
+    expect(hourly.total).toBe(built.total);
+    expect(built.days.every((day) => day.value < 18)).toBe(true);
+    expect(built.note).toContain('清零');
   });
 
   it('treats a falling meter as a reset and never returns a negative day', () => {
@@ -150,182 +154,100 @@ describe('buildUsage', () => {
     expect(built.days.every((day) => day.value >= 0)).toBe(true);
   });
 
-  const device1Gas = scaled(
-    [
-      ['2026-11-09T12:00:25.444+08:00', 2],
-      ['2026-11-09T12:00:26.447+08:00', 0],
-      ['2026-11-09T20:29:53.176+08:00', 1],
-      ['2026-11-09T20:29:54.156+08:00', 0],
-      ['2026-11-10T00:30:23.093+08:00', 1],
-      ['2026-11-10T00:30:24.089+08:00', 0],
-      ['2026-11-10T07:29:52.131+08:00', 1],
-      ['2026-11-10T07:29:53.133+08:00', 0],
-      ['2026-11-10T09:59:51.935+08:00', 1],
-      ['2026-11-10T09:59:52.937+08:00', 0],
-    ],
-    1,
-  );
-  const device1Runtime = scaled(
-    [
-      ['2026-11-09T12:00:25.452+08:00', 6],
-      ['2026-11-09T12:00:26.467+08:00', 0],
-      ['2026-11-10T00:30:23.099+08:00', 3],
-      ['2026-11-10T00:30:24.095+08:00', 0],
-      ['2026-11-10T07:29:52.138+08:00', 1],
-      ['2026-11-10T07:29:53.140+08:00', 0],
-    ],
-    0,
-  );
-  const device1Water = scaled(
-    [
-      ['2026-11-09T11:29:54.347+08:00', 90],
-      ['2026-11-09T11:29:55.363+08:00', 0],
-      ['2026-11-09T11:30:45.734+08:00', 2],
-      ['2026-11-09T11:30:47.834+08:00', 0],
-      ['2026-11-09T11:30:48.837+08:00', 2],
-      ['2026-11-09T11:30:50.850+08:00', 4],
-      ['2026-11-09T11:30:51.895+08:00', 2],
-      ['2026-11-09T12:00:25.447+08:00', 1158],
-      ['2026-11-09T12:00:26.451+08:00', 0],
-      ['2026-11-09T12:59:54.080+08:00', 84],
-      ['2026-11-09T12:59:55.082+08:00', 0],
-    ],
-    1,
-  );
+  const device1Gas = scaled(DEVICE1.gas, 1);
+  const device1Runtime = scaled(DEVICE1.runtime, 0);
+  const device1Water = scaled(DEVICE1.water, 1);
+  /** Stored reset inside the extract: raw 0 one second after the 12:00 raw 2. Not a pre-window guess. */
+  const device1GasReset = DEVICE1.gas[1];
 
-  it('keeps a leading cycle total uncounted when no reading exists before the window', () => {
-    const gas = collect(device1Gas, null);
-    expect(gas.days.find((day) => day.date === '2026-11-09T12:00')?.value).toBe(0);
-    expect(gas.total).toBe(0.4);
-    const runtime = collect(device1Runtime, null);
-    expect(runtime.days.find((day) => day.date === '2026-11-09T12:00')?.value).toBe(0);
-    expect(runtime.total).toBe(4);
-    expect(collect(device1Water, null).days.find((day) => day.date === '2026-11-09T11:00')?.value).toBe(0.8);
-  });
-
-  it('counts the same complete hours once a pre-window reset is the anchor', () => {
-    const gas = collect(device1Gas, PRIOR_RESET);
+  it('matches hour and day totals on the extracted series and does not show the unresolved opening as 0', () => {
+    for (const samples of [device1Gas, device1Runtime, device1Water, scaled(DEVICE2.gas, 1), scaled(DEVICE2.runtime, 0), scaled(DEVICE2.water, 1)]) {
+      const hour = collect(samples, null, 'hour');
+      const day = collect(samples, null, 'day');
+      expect(day.total).toBe(hour.total);
+      expect(hour.days.some((bucket) => bucket.value === 0)).toBe(false);
+      expect(day.days.some((bucket) => bucket.value === 0)).toBe(false);
+    }
+    const gas = collect(device1Gas, null, 'hour');
     expect(gas.days).toEqual([
-      { date: '2026-11-09T12:00', value: 0.2 },
       { date: '2026-11-09T20:00', value: 0.1 },
       { date: '2026-11-10T00:00', value: 0.1 },
       { date: '2026-11-10T07:00', value: 0.1 },
       { date: '2026-11-10T09:00', value: 0.1 },
     ]);
-    expect(gas.total).toBe(0.6);
-    expect(gas.note).toContain('清零');
+    expect(gas.total).toBe(0.4);
+    expect(gas.note).toContain('没有把它记成 0');
+    expect(collect(device1Water, null, 'hour').days.find((bucket) => bucket.date === '2026-11-09T11:00')?.value).toBe(0.8);
+    expect(collect(device1Runtime, null, 'day').days).toEqual([{ date: '2026-11-10', value: 4 }]);
+  });
 
-    const runtime = collect(device1Runtime, PRIOR_RESET);
-    expect(runtime.days).toEqual([
-      { date: '2026-11-09T12:00', value: 6 },
-      { date: '2026-11-10T00:00', value: 3 },
-      { date: '2026-11-10T07:00', value: 1 },
+  it('uses the stored 12:00 reset as the anchor for the later pulses, including the next calendar day', () => {
+    expect(device1GasReset.raw).toBe(0);
+    const anchor = { t: device1GasReset.t, value: 0 };
+    const later = device1Gas.filter((sample) => sample.t > anchor.t);
+    const from = new Date(anchor.t + 1);
+    const hour = collect(later, anchor, 'hour', from, WINDOW_TO);
+    const day = collect(later, anchor, 'day', from, WINDOW_TO);
+    expect(hour.days.map((bucket) => bucket.date)).toEqual([
+      '2026-11-09T20:00',
+      '2026-11-10T00:00',
+      '2026-11-10T07:00',
+      '2026-11-10T09:00',
     ]);
-    expect(runtime.total).toBe(10);
+    expect(hour.days.every((bucket) => bucket.value === 0.1)).toBe(true);
+    expect(day.total).toBe(hour.total);
+    expect(day.days.find((bucket) => bucket.date === '2026-11-10')?.value).toBe(0.3);
 
-    const water = collect(device1Water, PRIOR_RESET);
-    expect(water.days.find((day) => day.date === '2026-11-09T11:00')?.value).toBe(9.8);
-    expect(water.days.find((day) => day.date === '2026-11-09T12:00')?.value).toBe(124);
+    const covering = device1Gas.filter((sample) => sample.t >= anchor.t);
+    const coveredHour = collect(covering, null, 'hour', new Date(anchor.t), WINDOW_TO);
+    const coveredDay = collect(covering, null, 'day', new Date(anchor.t), WINDOW_TO);
+    for (const date of ['2026-11-10T00:00', '2026-11-10T07:00', '2026-11-10T09:00']) {
+      expect(coveredHour.days.find((bucket) => bucket.date === date)?.value).toBe(
+        hour.days.find((bucket) => bucket.date === date)?.value,
+      );
+    }
+    expect(coveredDay.days.find((bucket) => bucket.date === '2026-11-10')?.value).toBe(0.3);
+    expect(coveredHour.total).toBe(coveredDay.total);
   });
 
-  it('recovers the second device opening pulses without touching later hours', () => {
-    const gas = scaled(
-      [
-        ['2026-11-10T09:29:21.397+08:00', 1],
-        ['2026-11-10T09:29:22.443+08:00', 0],
-      ],
-      1,
-    );
-    expect(collect(gas, null).days).toEqual([{ date: '2026-11-10T09:00', value: 0 }]);
-    expect(collect(gas, PRIOR_RESET).days).toEqual([{ date: '2026-11-10T09:00', value: 0.1 }]);
+  it('keeps a constructed zero anchor distinct from the snapshot and does not add a lifetime total', () => {
+    const pulse = [at('2026-11-10T07:30:09.757+08:00', 0.1), at('2026-11-10T07:30:10.757+08:00', 0)];
+    const constructed = collect(pulse, at('2026-11-10T07:00:00+08:00', 0));
+    expect(constructed.days).toEqual([{ date: '2026-11-10T07:00', value: 0.1 }]);
+    const unresolved = collect(pulse, null);
+    expect(unresolved.days).toEqual([]);
+    expect(unresolved.note).toContain('没有把它记成 0');
 
-    const runtime = scaled(
-      [
-        ['2026-11-09T13:00:24.606+08:00', 1],
-        ['2026-11-09T13:00:25.607+08:00', 0],
-        ['2026-11-09T18:30:23.569+08:00', 1],
-        ['2026-11-09T18:30:24.548+08:00', 0],
-        ['2026-11-10T09:29:21.401+08:00', 1],
-        ['2026-11-10T09:29:22.446+08:00', 0],
-      ],
-      0,
-    );
-    expect(collect(runtime, null).days.find((day) => day.date === '2026-11-09T13:00')?.value).toBe(0);
-    expect(collect(runtime, PRIOR_RESET).days).toEqual([
-      { date: '2026-11-09T13:00', value: 1 },
-      { date: '2026-11-09T18:00', value: 1 },
-      { date: '2026-11-10T09:00', value: 1 },
-    ]);
-
-    const water = scaled(
-      [
-        ['2026-11-09T12:30:24.330+08:00', 98],
-        ['2026-11-09T12:30:25.330+08:00', 0],
-        ['2026-11-09T13:00:24.605+08:00', 130],
-        ['2026-11-09T13:00:25.603+08:00', 0],
-      ],
-      1,
-    );
-    expect(collect(water, null).days.find((day) => day.date === '2026-11-09T12:00')?.value).toBe(0);
-    const anchored = collect(water, PRIOR_RESET);
-    expect(anchored.days.find((day) => day.date === '2026-11-09T12:00')?.value).toBe(9.8);
-    expect(anchored.days.find((day) => day.date === '2026-11-09T13:00')?.value).toBe(13);
-  });
-
-  it('recovers the third device gas pulse and does not invent runtime', () => {
-    const gas = scaled(
-      [
-        ['2026-11-10T07:30:09.757+08:00', 1],
-        ['2026-11-10T07:30:10.757+08:00', 0],
-      ],
-      1,
-    );
-    expect(collect(gas, null).days).toEqual([{ date: '2026-11-10T07:00', value: 0 }]);
-    const anchored = collect(gas, PRIOR_RESET);
-    expect(anchored.days).toEqual([{ date: '2026-11-10T07:00', value: 0.1 }]);
-    expect(anchored.total).toBe(0.1);
-
-    const runtime = collect([], PRIOR_RESET);
-    expect(runtime.days).toEqual([]);
-    expect(runtime.total).toBe(0);
-    expect(runtime.note).toBeNull();
-  });
-
-  it('diffs a lifetime total from the pre-window reading and never adds that reading', () => {
     const from = new Date('2026-10-21T16:00:00.000Z');
-    const to = new Date('2026-10-22T16:00:00.000Z');
-    const samples = [at('2026-10-22T00:00:00.000Z', 1005), at('2026-10-22T06:00:00.000Z', 1010)];
-    const anchored = collect(samples, at('2026-10-21T12:00:00.000Z', 1000), 'hour', from, to);
-    expect(anchored.total).toBe(10);
-    expect(anchored.days.every((day) => day.value < 100)).toBe(true);
-    expect(anchored.note).toBeNull();
-
-    const opening = collect(
-      [at('2026-10-22T00:00:00.000Z', 1000), at('2026-10-22T06:00:00.000Z', 1005)],
-      null,
-      'hour',
-      from,
-      to,
-    );
-    expect(opening.total).toBe(5);
-  });
-
-  it('ignores a repeated peak, accepts reversed input, and rounds 0.1 plus 0.2', () => {
-    const reversed = [...device1Gas].reverse();
-    expect(collect(reversed, PRIOR_RESET).total).toBe(0.6);
-
-    const duplicated = [
-      device1Gas[0],
-      { t: device1Gas[0].t + 50, value: device1Gas[0].value },
-      ...device1Gas.slice(1),
+    const to = new Date('2026-10-24T16:00:00.000Z');
+    const samples = [
+      at('2026-10-22T00:00:00.000Z', 1000),
+      at('2026-10-22T06:00:00.000Z', 1010),
+      at('2026-10-23T00:00:00.000Z', 1020),
+      at('2026-10-23T06:00:00.000Z', 1030),
     ];
-    expect(collect(duplicated, PRIOR_RESET).days[0]).toEqual({ date: '2026-11-09T12:00', value: 0.2 });
+    const hour = collect(samples, null, 'hour', from, to);
+    const day = collect(samples, null, 'day', from, to);
+    expect(hour.total).toBe(30);
+    expect(day.total).toBe(hour.total);
+    expect(day.days).toEqual([
+      { date: '2026-10-22', value: 10 },
+      { date: '2026-10-23', value: 20 },
+    ]);
+    const anchored = collect(samples.slice(1), at('2026-10-21T12:00:00.000Z', 1000), 'day', from, to);
+    expect(anchored.total).toBe(30);
+    expect(anchored.days.every((bucket) => bucket.value < 100)).toBe(true);
 
-    const tenths = collect(
-      [at('2026-11-09T12:00:25+08:00', 0.2), at('2026-11-09T12:00:26+08:00', 0), at('2026-11-09T20:29:53+08:00', 0.1), at('2026-11-09T20:29:54+08:00', 0)],
-      PRIOR_RESET,
-    );
-    expect(tenths.total).toBe(0.3);
+    const dust = [
+      at('2026-10-22T01:00:00.000Z', 0),
+      at('2026-10-22T02:00:00.000Z', 0.0004),
+      at('2026-10-22T03:00:00.000Z', 0.0008),
+    ];
+    const dustHour = collect(dust, null, 'hour', from, to);
+    const dustDay = collect(dust, null, 'day', from, to);
+    expect(dustHour.total).toBe(0.001);
+    expect(dustDay.total).toBe(dustHour.total);
+    expect(dustHour.days.some((bucket) => bucket.value === 0)).toBe(false);
   });
 
   it('attributes a step across midnight to the later Shanghai hour, not the anchor day', () => {
@@ -360,10 +282,13 @@ describe('buildUsage', () => {
       to,
     );
     expect(built.days).toEqual([{ date: '2026-10-22', value: 10 }]);
-
-    const cycle = collect(device1Gas, PRIOR_RESET, 'day');
-    expect(cycle.days.find((day) => day.date === '2026-11-09')?.value).toBe(0.3);
-    expect(cycle.total).toBeLessThanOrEqual(0.6);
+    expect(collect(
+      [at('2026-10-22T00:00:00.000Z', 1005), at('2026-10-22T08:00:00.000Z', 1010)],
+      at('2026-10-21T12:00:00.000Z', 1000),
+      'hour',
+      from,
+      to,
+    ).total).toBe(built.total);
   });
 
   it('does not turn a cumulative anchor into an instant rate', () => {

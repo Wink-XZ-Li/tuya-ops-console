@@ -38,11 +38,8 @@ import {
 } from './dp-trends';
 import {
   buildUsage,
-  flattenUsageSlots,
-  rememberCumulativeSample,
-  shanghaiDayStart,
-  shanghaiHourStart,
   usageBucketForRange,
+  type UsageAnchor,
   type UsageBucket,
   type UsageSample,
 } from './usage';
@@ -365,18 +362,12 @@ export class DevicesService {
     if (isShortEventWindow(from, to)) {
       collect(await this.loadShortEvents(device.id, from, to, bizCode, { payload: true, eventTime: true }));
     } else {
-      const slots = new Map<number, { first: UsageSample; last: UsageSample; dip: UsageSample | null }>();
-      const bucketStart = bucket === 'hour' ? shanghaiHourStart : shanghaiDayStart;
+      // Keep every sample of this one DP. First/last/dip per day drops the cycle peaks in between.
       await this.scanLongEvents(device.id, from, to, bizCode, { id: true, payload: true, eventTime: true }, (page) => {
-        for (const event of page) {
-          for (const raw of extractDpSamples(event.payload, event.eventTime)) {
-            if (resolveDpToken(raw.code, schema) !== metric.sourceDpId) continue;
-            rememberCumulativeSample(slots, { t: raw.t, value: applyDpScale(raw.value, metric.scale) }, bucketStart(raw.t));
-          }
-        }
+        collect(page);
       });
-      samples.push(...flattenUsageSlots(slots));
     }
+    const baseline = await baselinePromise;
 
     return {
       metricId: metric.metricId,
@@ -385,7 +376,15 @@ export class DevicesService {
       unit: metric.unit,
       from: from.toISOString(),
       to: to.toISOString(),
-      ...buildUsage({ samples, baseline: await baselinePromise, from, to, mode: metric.mode, bucket }),
+      ...buildUsage({
+        samples,
+        baseline: baseline.sample,
+        anchor: baseline.anchor,
+        from,
+        to,
+        mode: metric.mode,
+        bucket,
+      }),
     };
   }
 
@@ -752,12 +751,13 @@ export class DevicesService {
     schema: ReturnType<typeof getProductDps>,
     sourceDpId: string,
     scale: number,
-  ): Promise<UsageSample | null> {
+  ): Promise<{ sample: UsageSample | null; anchor: UsageAnchor }> {
     const fromMs = from.getTime();
     const propertyCodes = new Set<string>(TREND_PROPERTY_BIZ_CODES);
     for (const table of this.eventTables(from)) {
       let cursor = from;
       let cursorId: string | null = null;
+      let capped = false;
       for (let page = 0; page < USAGE_BASELINE_MAX_PAGES; page += 1) {
         const rows = await table.findMany({
           where: cursorId
@@ -791,18 +791,29 @@ export class DevicesService {
               picked = { t: raw.t, value: applyDpScale(raw.value, scale) };
             }
           }
-          if (picked) return picked;
+          if (picked) return { sample: picked, anchor: 'found' };
         }
         if (rows.length < LOOKBACK_PAGE_SIZE) break;
         const last = rows[rows.length - 1];
-        if (!last?.id || !(last.eventTime instanceof Date)) break;
-        if (cursorId && last.id === cursorId && last.eventTime.getTime() === cursor.getTime()) break;
-        if (last.eventTime.getTime() > cursor.getTime()) break;
+        if (!last?.id || !(last.eventTime instanceof Date)) {
+          capped = true;
+          break;
+        }
+        if (cursorId && last.id === cursorId && last.eventTime.getTime() === cursor.getTime()) {
+          capped = true;
+          break;
+        }
+        if (last.eventTime.getTime() > cursor.getTime()) {
+          capped = true;
+          break;
+        }
         cursor = last.eventTime;
         cursorId = last.id;
+        capped = page === USAGE_BASELINE_MAX_PAGES - 1;
       }
+      if (capped) return { sample: null, anchor: 'limited' };
     }
-    return null;
+    return { sample: null, anchor: 'absent' };
   }
 
   private async latestEventBefore(
