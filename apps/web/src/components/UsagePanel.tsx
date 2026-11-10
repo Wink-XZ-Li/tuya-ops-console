@@ -22,6 +22,7 @@ type UsageResponse = {
   peakDay: { date: string; value: number } | null;
   days: UsageDay[];
   note: string | null;
+  anchor?: 'found' | 'absent' | 'limited';
 };
 
 const RANGES: Array<{ key: TrendPreset; label: string }> = [
@@ -167,7 +168,10 @@ export function UsagePanel({ deviceId, productId, now }: Props) {
       )}
       {error && <p className="error">{error}</p>}
       <p className="usage-kpi">
-        <span>本区间合计 {formatUsage(report?.total)}{unit ? ` ${unit}` : ''}</span>
+        <span>
+          本区间合计{' '}
+          {usageTotalUncertain(report) ? '—' : `${formatUsage(report?.total)}${unit ? ` ${unit}` : ''}`}
+        </span>
         <span>
           {averageLabel} {formatUsage(report?.dailyAvg)}
           {unit ? ` ${unit}` : ''}
@@ -180,7 +184,7 @@ export function UsagePanel({ deviceId, productId, now }: Props) {
       {loading && days.length === 0 ? (
         <p className="hint">加载中</p>
       ) : days.length === 0 ? (
-        <p className="hint">这段时间没有用量上报。</p>
+        <p className="hint">{usageTotalUncertain(report) ? report?.note : '这段时间没有用量上报。'}</p>
       ) : (
         <div className="usage-chart" ref={chartRef} role="group" aria-label={`${active.name}${bucket === 'hour' ? '小时柱' : '日柱'}`}>
           <div className="usage-y" aria-hidden="true">
@@ -232,9 +236,13 @@ export function UsagePanel({ deviceId, productId, now }: Props) {
           )}
         </div>
       )}
-      {report?.note && <p className="hint usage-note">{report.note}</p>}
+      {report?.note && !usageTotalUncertain(report) && <p className="hint usage-note">{report.note}</p>}
     </section>
   );
+}
+
+function usageTotalUncertain(report: UsageResponse | null): boolean {
+  return Boolean(report && report.days.length === 0 && report.note && report.anchor && report.anchor !== 'found');
 }
 
 function usageQuery(
