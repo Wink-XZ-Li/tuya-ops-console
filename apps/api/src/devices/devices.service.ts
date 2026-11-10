@@ -35,7 +35,15 @@ import {
   resolveDpToken,
   trendCountWindow,
 } from './dp-trends';
-import { buildUsage, usageBucketForRange, type UsageBucket } from './usage';
+import {
+  buildUsage,
+  USAGE_LOOKBACK_MAX_PAGES,
+  USAGE_LOOKBACK_PAGE_SIZE,
+  usageBucketForRange,
+  type UsageAnchor,
+  type UsageBucket,
+  type UsageSample,
+} from './usage';
 import { usageMetricsForProduct } from './usage-metrics';
 import { CONNECTIVITY_BIZ_CODES, buildConnectivityTimeline } from './connectivity';
 import { FIRMWARE_BIZ_CODES, buildChangeMarkers } from './change-markers';
@@ -334,6 +342,7 @@ export class DevicesService {
     const bucket = query.bucket ?? usageBucketForRange(to.getTime() - from.getTime());
 
     const schema = getProductDps(device.productId);
+    const baselinePromise = this.latestUsageSampleBefore(device.id, from, schema, metric.sourceDpId, metric.scale);
     const events = await this.prisma.deviceEvent.findMany({
       where: {
         deviceId: device.id,
@@ -344,13 +353,14 @@ export class DevicesService {
       orderBy: { eventTime: 'asc' },
     });
 
-    const samples = [];
+    const samples: UsageSample[] = [];
     for (const event of events) {
       for (const raw of extractDpSamples(event.payload, event.eventTime)) {
         if (resolveDpToken(raw.code, schema) !== metric.sourceDpId) continue;
         samples.push({ t: raw.t, value: applyDpScale(raw.value, metric.scale) });
       }
     }
+    const baseline = await baselinePromise;
 
     return {
       metricId: metric.metricId,
@@ -359,7 +369,15 @@ export class DevicesService {
       unit: metric.unit,
       from: from.toISOString(),
       to: to.toISOString(),
-      ...buildUsage({ samples, from, to, mode: metric.mode, bucket }),
+      ...buildUsage({
+        samples,
+        baseline: baseline.sample,
+        anchor: baseline.anchor,
+        from,
+        to,
+        mode: metric.mode,
+        bucket,
+      }),
     };
   }
 
@@ -817,6 +835,80 @@ export class DevicesService {
       ),
       openAlertCount: device.alerts.length,
     };
+  }
+
+  /**
+   * Latest stored value of one usage DP before `from`, on DeviceEvent only.
+   * This branch has no DeviceEventArchive and no event-window types.
+   * Empty property lists are skipped. Missing rows are not treated as zero.
+   */
+  private async latestUsageSampleBefore(
+    deviceId: string,
+    from: Date,
+    schema: ReturnType<typeof getProductDps>,
+    sourceDpId: string,
+    scale: number,
+  ): Promise<{ sample: UsageSample | null; anchor: UsageAnchor }> {
+    const fromMs = from.getTime();
+    const propertyCodes = new Set<string>(TREND_PROPERTY_BIZ_CODES);
+    let cursor = from;
+    let cursorId: string | null = null;
+    let capped = false;
+    for (let page = 0; page < USAGE_LOOKBACK_MAX_PAGES; page += 1) {
+      const rows: Array<{ id: string; eventTime: Date; payload: unknown; bizCode: string }> =
+        await this.prisma.deviceEvent.findMany({
+        where: cursorId
+          ? {
+              deviceId,
+              bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
+              OR: [
+                { eventTime: { lt: cursor } },
+                { AND: [{ eventTime: cursor }, { id: { lt: cursorId } }] },
+              ],
+            }
+          : {
+              deviceId,
+              bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
+              eventTime: { lt: cursor },
+            },
+        orderBy: [{ eventTime: 'desc' }, { id: 'desc' }],
+        take: USAGE_LOOKBACK_PAGE_SIZE,
+        select: { id: true, payload: true, eventTime: true, bizCode: true },
+      });
+      if (rows.length === 0) break;
+      for (const event of rows) {
+        const eventMs = event.eventTime instanceof Date ? event.eventTime.getTime() : Number.NaN;
+        if (!Number.isFinite(eventMs) || eventMs >= fromMs) continue;
+        if (event.bizCode && !propertyCodes.has(String(event.bizCode))) continue;
+        let picked: UsageSample | null = null;
+        for (const raw of extractDpSamples(event.payload, event.eventTime)) {
+          if (resolveDpToken(raw.code, schema) !== sourceDpId) continue;
+          if (raw.t >= fromMs) continue;
+          if (!picked || raw.t >= picked.t) {
+            picked = { t: raw.t, value: applyDpScale(raw.value, scale) };
+          }
+        }
+        if (picked) return { sample: picked, anchor: 'found' };
+      }
+      if (rows.length < USAGE_LOOKBACK_PAGE_SIZE) break;
+      const last = rows[rows.length - 1];
+      if (!last?.id || !(last.eventTime instanceof Date)) {
+        capped = true;
+        break;
+      }
+      if (cursorId && last.id === cursorId && last.eventTime.getTime() === cursor.getTime()) {
+        capped = true;
+        break;
+      }
+      if (last.eventTime.getTime() > cursor.getTime()) {
+        capped = true;
+        break;
+      }
+      cursor = last.eventTime;
+      cursorId = String(last.id);
+      capped = page === USAGE_LOOKBACK_MAX_PAGES - 1;
+    }
+    return { sample: null, anchor: capped ? 'limited' : 'absent' };
   }
 }
 
