@@ -38,11 +38,8 @@ import {
 } from './dp-trends';
 import {
   buildUsage,
-  flattenUsageSlots,
-  rememberCumulativeSample,
-  shanghaiDayStart,
-  shanghaiHourStart,
   usageBucketForRange,
+  type UsageAnchor,
   type UsageBucket,
   type UsageSample,
 } from './usage';
@@ -58,6 +55,7 @@ import {
 import {
   LOOKBACK_MAX_PAGES,
   LOOKBACK_PAGE_SIZE,
+  USAGE_BASELINE_MAX_PAGES,
   bucketKey,
   compareEvents,
   eventHotCutoff,
@@ -345,6 +343,13 @@ export class DevicesService {
     const bucket = query.bucket ?? usageBucketForRange(to.getTime() - from.getTime());
     const schema = getProductDps(device.productId);
     const bizCode = { in: [...TREND_PROPERTY_BIZ_CODES] };
+    const baselinePromise = this.latestUsageSampleBefore(
+      device.id,
+      from,
+      schema,
+      metric.sourceDpId,
+      metric.scale,
+    );
     const samples: UsageSample[] = [];
     const collect = (events: Array<{ payload: unknown; eventTime: Date }>) => {
       for (const event of events) {
@@ -357,18 +362,12 @@ export class DevicesService {
     if (isShortEventWindow(from, to)) {
       collect(await this.loadShortEvents(device.id, from, to, bizCode, { payload: true, eventTime: true }));
     } else {
-      const slots = new Map<number, { first: UsageSample; last: UsageSample; dip: UsageSample | null }>();
-      const bucketStart = bucket === 'hour' ? shanghaiHourStart : shanghaiDayStart;
+      // Keep every sample of this one DP. First/last/dip per day drops the cycle peaks in between.
       await this.scanLongEvents(device.id, from, to, bizCode, { id: true, payload: true, eventTime: true }, (page) => {
-        for (const event of page) {
-          for (const raw of extractDpSamples(event.payload, event.eventTime)) {
-            if (resolveDpToken(raw.code, schema) !== metric.sourceDpId) continue;
-            rememberCumulativeSample(slots, { t: raw.t, value: applyDpScale(raw.value, metric.scale) }, bucketStart(raw.t));
-          }
-        }
+        collect(page);
       });
-      samples.push(...flattenUsageSlots(slots));
     }
+    const baseline = await baselinePromise;
 
     return {
       metricId: metric.metricId,
@@ -377,7 +376,15 @@ export class DevicesService {
       unit: metric.unit,
       from: from.toISOString(),
       to: to.toISOString(),
-      ...buildUsage({ samples, from, to, mode: metric.mode, bucket }),
+      ...buildUsage({
+        samples,
+        baseline: baseline.sample,
+        anchor: baseline.anchor,
+        from,
+        to,
+        mode: metric.mode,
+        bucket,
+      }),
     };
   }
 
@@ -680,6 +687,26 @@ export class DevicesService {
     return tables;
   }
 
+  /**
+   * Lookback can be older than the hot table even when `from` is recent.
+   * Hot is searched first. Archive is next only when hot did not hit the page cap.
+   */
+  private usageBaselineTables(): Array<{
+    findMany: (query: Record<string, unknown>) => Promise<Array<{ id?: string; eventTime: Date; bizCode?: string; payload?: unknown }>>;
+  }> {
+    const hot = this.prisma.deviceEvent as unknown as {
+      findMany: (query: Record<string, unknown>) => Promise<Array<{ id?: string; eventTime: Date; bizCode?: string; payload?: unknown }>>;
+    };
+    const tables = [hot];
+    const archive = (
+      this.prisma as unknown as {
+        deviceEventArchive?: (typeof tables)[number];
+      }
+    ).deviceEventArchive;
+    if (archive?.findMany) tables.push(archive);
+    return tables;
+  }
+
   private async loadShortEvents(
     deviceId: string,
     from: Date,
@@ -732,6 +759,81 @@ export class DevicesService {
         },
       );
     }
+  }
+
+  /**
+   * Latest stored value of one usage DP before `from`.
+   * Empty property lists are skipped. A missing DP is not treated as zero.
+   */
+  private async latestUsageSampleBefore(
+    deviceId: string,
+    from: Date,
+    schema: ReturnType<typeof getProductDps>,
+    sourceDpId: string,
+    scale: number,
+  ): Promise<{ sample: UsageSample | null; anchor: UsageAnchor }> {
+    const fromMs = from.getTime();
+    const propertyCodes = new Set<string>(TREND_PROPERTY_BIZ_CODES);
+    for (const table of this.usageBaselineTables()) {
+      let cursor = from;
+      let cursorId: string | null = null;
+      let capped = false;
+      for (let page = 0; page < USAGE_BASELINE_MAX_PAGES; page += 1) {
+        const rows = await table.findMany({
+          where: cursorId
+            ? {
+                deviceId,
+                bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
+                OR: [
+                  { eventTime: { lt: cursor } },
+                  { AND: [{ eventTime: cursor }, { id: { lt: cursorId } }] },
+                ],
+              }
+            : {
+                deviceId,
+                bizCode: { in: [...TREND_PROPERTY_BIZ_CODES] },
+                eventTime: { lt: cursor },
+              },
+          orderBy: [{ eventTime: 'desc' }, { id: 'desc' }],
+          take: LOOKBACK_PAGE_SIZE,
+          select: { id: true, payload: true, eventTime: true, bizCode: true },
+        });
+        if (rows.length === 0) break;
+        for (const event of rows) {
+          const eventMs = event.eventTime instanceof Date ? event.eventTime.getTime() : Number.NaN;
+          if (!Number.isFinite(eventMs) || eventMs >= fromMs) continue;
+          if (event.bizCode && !propertyCodes.has(String(event.bizCode))) continue;
+          let picked: UsageSample | null = null;
+          for (const raw of extractDpSamples(event.payload, event.eventTime)) {
+            if (resolveDpToken(raw.code, schema) !== sourceDpId) continue;
+            if (raw.t >= fromMs) continue;
+            if (!picked || raw.t >= picked.t) {
+              picked = { t: raw.t, value: applyDpScale(raw.value, scale) };
+            }
+          }
+          if (picked) return { sample: picked, anchor: 'found' };
+        }
+        if (rows.length < LOOKBACK_PAGE_SIZE) break;
+        const last = rows[rows.length - 1];
+        if (!last?.id || !(last.eventTime instanceof Date)) {
+          capped = true;
+          break;
+        }
+        if (cursorId && last.id === cursorId && last.eventTime.getTime() === cursor.getTime()) {
+          capped = true;
+          break;
+        }
+        if (last.eventTime.getTime() > cursor.getTime()) {
+          capped = true;
+          break;
+        }
+        cursor = last.eventTime;
+        cursorId = last.id;
+        capped = page === USAGE_BASELINE_MAX_PAGES - 1;
+      }
+      if (capped) return { sample: null, anchor: 'limited' };
+    }
+    return { sample: null, anchor: 'absent' };
   }
 
   private async latestEventBefore(

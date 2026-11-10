@@ -127,4 +127,26 @@ describe('UsagePanel', () => {
     fireEvent.change(screen.getByLabelText('结束'), { target: { value: '2026-06-01T00:00' } });
     expect(await screen.findByText('区间不能超过 90 天')).toBeInTheDocument();
   });
+
+  it('does not present an unconfirmed anchor as a zero total', async () => {
+    api.mockResolvedValue({
+      metricId: 'gas',
+      name: '用气量',
+      unit: 'm³',
+      bucket: 'hour',
+      from: '2026-10-22T00:00:00.000Z',
+      to: '2026-10-23T00:00:00.000Z',
+      total: 0,
+      dailyAvg: null,
+      peakDay: null,
+      days: [],
+      anchor: 'limited',
+      note: '窗口前回查达到上限，更早的锚点未确认，没有把未知增量记成 0。',
+    });
+    render(<UsagePanel deviceId="dev-a" productId="1x0qz5jtlabxywcg" now={NOW} />);
+    expect(await screen.findByText('本区间合计 —')).toBeInTheDocument();
+    expect(screen.getByText(/更早的锚点未确认/)).toBeInTheDocument();
+    expect(screen.queryByText('这段时间没有用量上报。')).toBeNull();
+    expect(screen.queryByText(/本区间合计 0/)).toBeNull();
+  });
 });

@@ -1,4 +1,6 @@
 import { DevicesService } from './devices.service';
+import { DEVICE_6cacc0e565a69e000flgna as DEVICE1 } from './usage-snapshot.fixture';
+import { LOOKBACK_PAGE_SIZE, USAGE_BASELINE_MAX_PAGES } from './event-window';
 
 describe('DevicesService', () => {
   it('filters devices by productId', async () => {
@@ -336,6 +338,296 @@ describe('DevicesService', () => {
     expect(page.days).toEqual([{ date: '2026-10-22', value: 1.5 }]);
 
     await expect(svc.usage('vdevo1', { metric: 'energy' })).rejects.toThrow('该产品没有这项用量');
+  });
+
+  it('anchors boiler gas on the last stored reading and does not invent a missing runtime', async () => {
+    const from = '2026-11-09T02:24:00.000Z';
+    const to = '2026-11-10T02:24:00.000Z';
+    const pulseMs = Date.parse('2026-11-10T07:30:09.757+08:00');
+    const resetMs = Date.parse('2026-11-10T07:30:10.757+08:00');
+    const priorMs = Date.parse('2026-11-09T09:30:00+08:00');
+    const findMany = jest.fn(async (query: { where?: unknown }) => {
+      const lookedBack = JSON.stringify(query.where ?? {}).includes('"lt"');
+      if (lookedBack) {
+        return [
+          {
+            id: 'empty-newer',
+            bizCode: 'devicePropertyMessage',
+            eventTime: new Date('2026-11-09T02:00:00.000Z'),
+            payload: { properties: [] },
+          },
+          {
+            id: 'gas-prior',
+            bizCode: 'devicePropertyMessage',
+            eventTime: new Date(priorMs),
+            payload: { properties: [{ code: 'gas_consumption', dpId: 14, value: 0, time: priorMs }] },
+          },
+        ];
+      }
+      return [
+        {
+          id: 'gas-reset',
+          bizCode: 'devicePropertyMessage',
+          eventTime: new Date(resetMs),
+          payload: { properties: [{ code: 'gas_consumption', dpId: 14, value: 0, time: resetMs }] },
+        },
+        {
+          id: 'gas-pulse',
+          bizCode: 'devicePropertyMessage',
+          eventTime: new Date(pulseMs),
+          payload: { properties: [{ code: 'gas_consumption', dpId: 14, value: 1, time: pulseMs }] },
+        },
+      ];
+    });
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1', productId: 'ckjfqtnqqystvfaa' }),
+      },
+      deviceEvent: { findMany },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const gas = await svc.usage('6c8be136f54a60b80bsufb', { metric: 'gas', from, to, bucket: 'hour' });
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          deviceId: 'internal-1',
+          eventTime: expect.objectContaining({ lt: new Date(from) }),
+        }),
+      }),
+    );
+    expect(gas.days).toEqual([{ date: '2026-11-10T07:00', value: 0.1 }]);
+    expect(gas.total).toBe(0.1);
+    expect(gas.unit).toBe('m³');
+
+    const runtime = await svc.usage('6c8be136f54a60b80bsufb', { metric: 'runtime', from, to, bucket: 'hour' });
+    expect(runtime.days).toEqual([]);
+    expect(runtime.total).toBe(0);
+    expect(runtime.sourceDpId).toBe('runtime');
+  });
+
+  it('does not treat an empty property list as a zero baseline', async () => {
+    const from = '2026-11-09T02:24:00.000Z';
+    const to = '2026-11-10T02:24:00.000Z';
+    const sampleMs = Date.parse('2026-11-10T07:30:09.757+08:00');
+    const priorMs = Date.parse('2026-11-09T09:30:00+08:00');
+    const findMany = jest.fn(async (query: { where?: unknown }) => {
+      if (JSON.stringify(query.where ?? {}).includes('"lt"')) {
+        return [
+          {
+            id: 'empty',
+            bizCode: 'devicePropertyMessage',
+            eventTime: new Date('2026-11-09T02:00:00.000Z'),
+            payload: { properties: [] },
+          },
+          {
+            id: 'gas-prior',
+            bizCode: 'devicePropertyMessage',
+            eventTime: new Date(priorMs),
+            payload: { properties: [{ code: 'gas_consumption', value: 5, time: priorMs }] },
+          },
+        ];
+      }
+      return [
+        {
+          id: 'gas-next',
+          bizCode: 'devicePropertyMessage',
+          eventTime: new Date(sampleMs),
+          payload: { properties: [{ code: 'gas_consumption', value: 8, time: sampleMs }] },
+        },
+      ];
+    });
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1', productId: 'ckjfqtnqqystvfaa' }),
+      },
+      deviceEvent: { findMany },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const gas = await svc.usage('boiler-1', { metric: 'gas', from, to, bucket: 'hour' });
+    expect(gas.total).toBe(0.3);
+    expect(gas.total).not.toBe(0.8);
+  });
+
+  it('keeps the opening cycle uncounted when lookback finds no reading of that DP', async () => {
+    const from = '2026-11-09T02:24:00.000Z';
+    const to = '2026-11-10T02:24:00.000Z';
+    const pulseMs = Date.parse('2026-11-10T07:30:09.757+08:00');
+    const resetMs = pulseMs + 1000;
+    const findMany = jest.fn(async (query: { where?: unknown }) => {
+      if (JSON.stringify(query.where ?? {}).includes('"lt"')) {
+        return [
+          {
+            id: 'empty',
+            bizCode: 'devicePropertyMessage',
+            eventTime: new Date('2026-11-09T02:00:00.000Z'),
+            payload: { properties: [] },
+          },
+        ];
+      }
+      return [
+        {
+          id: 'gas-pulse',
+          bizCode: 'devicePropertyMessage',
+          eventTime: new Date(pulseMs),
+          payload: { properties: [{ code: 'gas_consumption', value: 1, time: pulseMs }] },
+        },
+        {
+          id: 'gas-reset',
+          bizCode: 'devicePropertyMessage',
+          eventTime: new Date(resetMs),
+          payload: { properties: [{ code: 'gas_consumption', value: 0, time: resetMs }] },
+        },
+      ];
+    });
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1', productId: 'ckjfqtnqqystvfaa' }),
+      },
+      deviceEvent: { findMany },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const gas = await svc.usage('boiler-1', { metric: 'gas', from, to, bucket: 'hour' });
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          eventTime: expect.objectContaining({ lt: new Date(from) }),
+        }),
+      }),
+    );
+    expect(gas.days).toEqual([]);
+    expect(gas.total).toBe(0);
+    expect(gas.anchor).toBe('absent');
+    expect(gas.note).toContain('没有把它记成 0');
+    const day = await svc.usage('boiler-1', { metric: 'gas', from, to, bucket: 'day' });
+    expect(day.total).toBe(gas.total);
+    expect(day.days.some((bucket) => bucket.value === 0)).toBe(false);
+  });
+
+  it('keeps a long window day total equal to the hour total for every extracted gas pulse', async () => {
+    const from = '2026-11-08T02:24:00.000Z';
+    const to = '2026-11-10T02:24:00.000Z';
+    const events = DEVICE1.gas.map((point, index) => ({
+      id: `gas-${index}`,
+      bizCode: 'devicePropertyMessage',
+      eventTime: new Date(point.t),
+      payload: { properties: [{ code: 'gas_consumption', dpId: 14, value: point.raw, time: point.t }] },
+    }));
+    const findMany = jest.fn(async (query: { where?: unknown }) => {
+      if (JSON.stringify(query.where ?? {}).includes('"lt"')) return [];
+      return events;
+    });
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1', productId: 'ckjfqtnqqystvfaa' }),
+      },
+      deviceEvent: { findMany },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const hour = await svc.usage(DEVICE1.deviceId, { metric: 'gas', from, to, bucket: 'hour' });
+    const day = await svc.usage(DEVICE1.deviceId, { metric: 'gas', from, to, bucket: 'day' });
+    expect(hour.total).toBe(0.4);
+    expect(day.total).toBe(hour.total);
+    expect(day.days.find((bucket) => bucket.date === '2026-11-10')?.value).toBe(0.3);
+    expect(hour.days.some((bucket) => bucket.value === 0)).toBe(false);
+  });
+
+  it('stops the pre-window scan at the page cap and does not call the missing anchor zero', async () => {
+    const from = '2026-11-09T02:24:00.000Z';
+    const to = '2026-11-10T02:24:00.000Z';
+    const pulseMs = Date.parse('2026-11-10T07:30:09.757+08:00');
+    let lookbacks = 0;
+    const findMany = jest.fn(async (query: { where?: unknown; take?: number }) => {
+      if (!JSON.stringify(query.where ?? {}).includes('"lt"')) {
+        return [
+          {
+            id: 'gas-pulse',
+            bizCode: 'devicePropertyMessage',
+            eventTime: new Date(pulseMs),
+            payload: { properties: [{ code: 'gas_consumption', value: 1, time: pulseMs }] },
+          },
+          {
+            id: 'gas-reset',
+            bizCode: 'devicePropertyMessage',
+            eventTime: new Date(pulseMs + 1000),
+            payload: { properties: [{ code: 'gas_consumption', value: 0, time: pulseMs + 1000 }] },
+          },
+        ];
+      }
+      lookbacks += 1;
+      const pageStart = Date.parse(from) - lookbacks * LOOKBACK_PAGE_SIZE * 1000;
+      return Array.from({ length: LOOKBACK_PAGE_SIZE }, (_, index) => ({
+        id: `other-${lookbacks}-${index}`,
+        bizCode: 'devicePropertyMessage',
+        eventTime: new Date(pageStart - index * 1000),
+        payload: { properties: [{ code: 'flame_level', value: 1, time: pageStart - index * 1000 }] },
+      }));
+    });
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1', productId: 'ckjfqtnqqystvfaa' }),
+      },
+      deviceEvent: { findMany },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const gas = await svc.usage('boiler-1', { metric: 'gas', from, to, bucket: 'hour' });
+    expect(lookbacks).toBe(USAGE_BASELINE_MAX_PAGES);
+    expect(gas.anchor).toBe('limited');
+    expect(gas.days).toEqual([]);
+    expect(gas.note).toContain('未确认');
+    expect(gas.note).not.toContain('精确');
+  });
+
+  it('reads an archived pre-window sample when the hot table has already ended', async () => {
+    const from = '2026-11-09T02:24:00.000Z';
+    const to = '2026-11-10T02:24:00.000Z';
+    const pulseMs = Date.parse('2026-11-10T07:30:09.757+08:00');
+    const priorMs = Date.parse('2026-10-20T01:00:00.000Z');
+    const findMany = jest.fn(async (query: { where?: unknown }) => {
+      if (JSON.stringify(query.where ?? {}).includes('"lt"')) {
+        return [
+          {
+            id: 'hot-other',
+            bizCode: 'devicePropertyMessage',
+            eventTime: new Date('2026-11-09T01:00:00.000Z'),
+            payload: { properties: [{ code: 'flame_level', value: 1 }] },
+          },
+        ];
+      }
+      return [
+        {
+          id: 'gas-pulse',
+          bizCode: 'devicePropertyMessage',
+          eventTime: new Date(pulseMs),
+          payload: { properties: [{ code: 'gas_consumption', value: 1, time: pulseMs }] },
+        },
+        {
+          id: 'gas-reset',
+          bizCode: 'devicePropertyMessage',
+          eventTime: new Date(pulseMs + 1000),
+          payload: { properties: [{ code: 'gas_consumption', value: 0, time: pulseMs + 1000 }] },
+        },
+      ];
+    });
+    const archiveFindMany = jest.fn(async () => [
+      {
+        id: 'archived-zero',
+        bizCode: 'devicePropertyMessage',
+        eventTime: new Date(priorMs),
+        payload: { properties: [{ code: 'gas_consumption', value: 0, time: priorMs }] },
+      },
+    ]);
+    const prisma = {
+      device: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'internal-1', productId: 'ckjfqtnqqystvfaa' }),
+      },
+      deviceEvent: { findMany },
+      deviceEventArchive: { findMany: archiveFindMany },
+    };
+    const svc = new DevicesService(prisma as any, {} as any);
+    const gas = await svc.usage('boiler-1', { metric: 'gas', from, to, bucket: 'hour' });
+    expect(archiveFindMany).toHaveBeenCalled();
+    expect(gas.anchor).toBe('found');
+    expect(gas.days).toEqual([{ date: '2026-11-10T07:00', value: 0.1 }]);
   });
 
   it('builds the connectivity ribbon from online and offline device events, not alerts', async () => {

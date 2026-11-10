@@ -11,6 +11,13 @@ export const EVENT_PAGE_SIZE = 400;
 /** Prior-state probe before `from`. Stops early once every status DP is filled. */
 export const LOOKBACK_PAGE_SIZE = 200;
 export const LOOKBACK_MAX_PAGES = 5;
+/**
+ * Usage meters are reported far less often than status. Walk backward only
+ * until that DP appears. 30 pages is 6000 events, a few days at the observed
+ * property rate, and stops a missing DP from scanning the whole hot table.
+ * Hitting the cap is reported as an unconfirmed anchor. It is not a stored zero.
+ */
+export const USAGE_BASELINE_MAX_PAGES = 30;
 
 const MIN_BUCKET_MS = 60 * 1000;
 
